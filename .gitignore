@@ -19,5 +19,5 @@ PLAN.md
 style.md
 frontend/dist/
 backend/target/
-release/release/
+release/
 .nexttyproa-backups
