@@ -1,0 +1,15 @@
+server:
+  address: 127.0.0.1
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: nexttyproa-backend
+
+nexttyproa:
+  auth-token: ${AUTH_TOKEN:dev-token-change-me}
+  vault-path: ${VAULT_PATH:}
+
+logging:
+  level:
+    com.nexttyproa: INFO

@@ -1,0 +1,83 @@
+{
+  "name": "nexttyproa",
+  "version": "1.0.0",
+  "description": "A Typora-like markdown note desktop app",
+  "main": "electron/main.js",
+  "author": "nextTyproa",
+  "license": "MIT",
+  "scripts": {
+    "dev:backend": "cd backend && mvn spring-boot:run -Dspring-boot.run.arguments=--nexttyproa.auth-token=dev-token-change-me",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:electron": "wait-on http://127.0.0.1:8080/api/health http://127.0.0.1:5173 && cross-env BACKEND_PORT=8080 electron .",
+    "dev": "concurrently -k -n backend,frontend,electron -c blue,green,magenta \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:electron\"",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && mvn -DskipTests package && node ../scripts/copy-backend-jar.js",
+    "build": "npm run build:backend && npm run build:frontend",
+    "dist:verify": "cd backend && mvn test && cd .. && npm run build && node scripts/verify-dist-resources.js",
+    "prepare:resources": "node scripts/copy-backend-jar.js && node scripts/prepare-jre.js",
+    "dist": "npm run build && npm run prepare:resources && npx electron-builder --win dir && powershell -ExecutionPolicy Bypass -File scripts/package-zip.ps1",
+    "dist:setup": "npm run build && npm run prepare:resources && npx electron-builder --win nsis",
+    "dist:dir": "npm run build && npm run prepare:resources && npx electron-builder --win dir",
+    "dist:portable": "npm run build && npm run prepare:resources && npx electron-builder --win portable"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.nexttyproa.app",
+    "productName": "NextTyproa",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/backend.jar",
+        "to": "backend.jar"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      },
+      {
+        "from": "resources/jre",
+        "to": "jre"
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "NextTyproa",
+      "include": "build/installer.nsh"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "publisherName": "NextTyproa",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown Document",
+        "description": "Markdown document",
+        "role": "Editor"
+      }
+    ]
+  }
+}
