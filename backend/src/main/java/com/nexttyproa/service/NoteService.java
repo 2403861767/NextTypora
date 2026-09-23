@@ -1,5 +1,6 @@
 package com.nexttyproa.service;
 
+import com.google.common.util.concurrent.Striped;
 import com.nexttyproa.dto.CreateNoteRequest;
 import com.nexttyproa.dto.NoteDto;
 import com.nexttyproa.dto.SaveNoteRequest;
@@ -9,8 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
 
 @Service
 public class NoteService {
@@ -18,7 +18,7 @@ public class NoteService {
     private final WorkspaceService workspaceService;
     private final FileService fileService;
     private final IndexService indexService;
-    private final Map<String, Object> pathLocks = new ConcurrentHashMap<>();
+    private final Striped<Lock> pathLocks = Striped.lock(128);
 
     public NoteService(WorkspaceService workspaceService, FileService fileService, IndexService indexService) {
         this.workspaceService = workspaceService;
@@ -42,7 +42,9 @@ public class NoteService {
         Path vaultRoot = requireVault();
         String relativePath = normalizePath(request.getPath());
         requireMarkdownPath(relativePath);
-        synchronized (lockFor(relativePath)) {
+        Lock lock = lockFor(relativePath);
+        lock.lock();
+        try {
             Path file = fileService.resolveSafe(vaultRoot, relativePath);
             String nextContent = request.getContent() == null ? "" : request.getContent();
             FileService.ReadFileResult currentRead = fileService.exists(file)
@@ -69,6 +71,8 @@ public class NoteService {
             indexService.indexNote(vaultRoot, relativePath, nextContent);
 
             return toDto(vaultRoot, file, new FileService.ReadFileResult(nextContent, fileService.normalizeEncodingName(encoding), hasBom));
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -144,8 +148,8 @@ public class NoteService {
         }
     }
 
-    private Object lockFor(String relativePath) {
-        return pathLocks.computeIfAbsent(relativePath, ignored -> new Object());
+    private Lock lockFor(String relativePath) {
+        return pathLocks.get(relativePath);
     }
 
     public static class NotFoundException extends RuntimeException {
