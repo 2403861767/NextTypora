@@ -7,6 +7,8 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -63,6 +65,43 @@ class FileServiceTest {
         fileService.writeFileAtomic(file, read.content() + "\n追加", read.encoding(), read.hasBom(), true);
         assertEquals("# 标题\n中文内容\n追加", new String(Files.readAllBytes(file), Charset.forName("GBK")));
         assertTrue(Files.exists(vaultRoot.resolve(".nexttyproa-backups")));
+    }
+
+    @Test
+    void keepsOnlyNewestBackups(@TempDir Path vaultRoot) throws Exception {
+        Path file = vaultRoot.resolve("a.md");
+        Files.writeString(file, "v0", StandardCharsets.UTF_8);
+        Path backupDir = Files.createDirectory(vaultRoot.resolve(".nexttyproa-backups"));
+        for (int i = 0; i < 15; i++) {
+            Files.writeString(backupDir.resolve(fakeBackupName(i)), "old" + i);
+        }
+        Path otherFileBackup = Files.writeString(backupDir.resolve("a.md.old.md.2019-01-01T000000Z.bak"), "other");
+
+        fileService.writeFileAtomic(file, "v1", "UTF-8", false, true);
+
+        List<String> remaining;
+        try (Stream<Path> entries = Files.list(backupDir)) {
+            remaining = entries.map(p -> p.getFileName().toString())
+                    .filter(name -> name.startsWith("a.md.") && !name.startsWith("a.md.old.md."))
+                    .toList();
+        }
+        assertEquals(10, remaining.size());
+        for (int i = 0; i < 6; i++) {
+            assertFalse(remaining.contains(fakeBackupName(i)), fakeBackupName(i));
+        }
+        for (int i = 6; i < 15; i++) {
+            assertTrue(remaining.contains(fakeBackupName(i)), fakeBackupName(i));
+        }
+        assertTrue(remaining.stream().anyMatch(name -> !name.startsWith("a.md.2020-")), "new backup is kept");
+        assertTrue(Files.exists(otherFileBackup));
+    }
+
+    /**
+     * Fake i is 0.5s newer than fake i-1, alternating between whole and fractional seconds. The cut
+     * between #5 ("000003Z") and #6 ("000003-5Z") falls inside one second, where string order is wrong.
+     */
+    private static String fakeBackupName(int i) {
+        return String.format("a.md.2020-01-01T0000%02d%sZ.bak", (i + 1) / 2, i % 2 == 0 ? "-5" : "");
     }
 
     @Test

@@ -349,7 +349,7 @@ List<SearchHit> hits = notes.values().stream()
 
 ---
 
-### - [ ] BUG-P2-003: FileService 备份策略 - .bak 文件无限累积
+### - [x] BUG-P2-003: FileService 备份策略 - .bak 文件无限累积
 **问题概述**: 每次保存都创建 `.bak` 备份，但从不清理，长期使用会产生大量备份文件占用磁盘空间。
 
 **涉及文件**:
@@ -373,7 +373,7 @@ Files.copy(file, backupDir.resolve(fileName + "." + timestamp + ".bak"), ...);
 
 ---
 
-### - [ ] BUG-P2-004: TreeNode 构建性能 - 递归无缓存
+### - [x] BUG-P2-004: TreeNode 构建性能 - 递归无缓存
 **问题概述**: `WorkspaceService.buildTree()` 每次都递归遍历整个文件系统，未使用缓存或增量更新。
 
 **涉及文件**:

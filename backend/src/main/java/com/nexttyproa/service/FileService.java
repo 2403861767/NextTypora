@@ -1,5 +1,7 @@
 package com.nexttyproa.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -18,16 +20,28 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 @Service
 public class FileService {
 
+    private static final Logger log = LoggerFactory.getLogger(FileService.class);
+
     private static final byte[] UTF8_BOM = new byte[] {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
     private static final String DEFAULT_ENCODING = "UTF-8";
     private static final int BINARY_SCAN_LIMIT = 8192;
     private static final String[] LEGACY_ENCODINGS = {"GBK", "Big5", "Shift_JIS"};
+    private static final String BACKUP_DIR_NAME = ".nexttyproa-backups";
+    private static final int MAX_BACKUPS_PER_FILE = 10;
+    // Instant.toString() with ':' removed and '.' replaced by '-', e.g. 2026-09-24T101530-123456Z
+    private static final Pattern BACKUP_TIMESTAMP = Pattern.compile("(\\d{4}-\\d{2}-\\d{2})T(\\d{2})(\\d{2})(\\d{2})(?:-(\\d{1,9}))?Z");
 
     /**
      * Normalize path separators to forward slashes for cross-platform consistency.
@@ -159,11 +173,63 @@ public class FileService {
             return;
         }
         Path parent = file.getParent() == null ? file.toAbsolutePath().getParent() : file.getParent();
-        Path backupDir = parent.resolve(".nexttyproa-backups");
+        Path backupDir = parent.resolve(BACKUP_DIR_NAME);
         Files.createDirectories(backupDir);
         String timestamp = Instant.now().toString().replace(":", "").replace(".", "-");
         String fileName = file.getFileName().toString();
         Files.copy(file, backupDir.resolve(fileName + "." + timestamp + ".bak"), StandardCopyOption.REPLACE_EXISTING);
+        pruneBackups(backupDir, fileName);
+    }
+
+    /**
+     * Keeps only the newest {@link #MAX_BACKUPS_PER_FILE} backups of one file. Best-effort: a failure
+     * here must never fail the save that triggered it.
+     */
+    private void pruneBackups(Path backupDir, String fileName) {
+        String prefix = fileName + ".";
+        String suffix = ".bak";
+        List<Map.Entry<Instant, Path>> backups = new ArrayList<>();
+        try (Stream<Path> entries = Files.list(backupDir)) {
+            entries.forEach(entry -> {
+                String name = entry.getFileName().toString();
+                if (name.length() <= prefix.length() + suffix.length()
+                        || !name.startsWith(prefix) || !name.endsWith(suffix)) {
+                    return;
+                }
+                // Exact match on the timestamp keeps backups of e.g. "a.md.old.md" out of "a.md"'s set.
+                Instant created = parseBackupTimestamp(name.substring(prefix.length(), name.length() - suffix.length()));
+                if (created != null) {
+                    backups.add(Map.entry(created, entry));
+                }
+            });
+        } catch (IOException e) {
+            log.warn("Failed to list backups in {}", backupDir, e);
+            return;
+        }
+        if (backups.size() <= MAX_BACKUPS_PER_FILE) {
+            return;
+        }
+        backups.sort(Map.Entry.<Instant, Path>comparingByKey(Comparator.reverseOrder()));
+        for (Map.Entry<Instant, Path> stale : backups.subList(MAX_BACKUPS_PER_FILE, backups.size())) {
+            try {
+                Files.deleteIfExists(stale.getValue());
+            } catch (IOException e) {
+                log.warn("Failed to delete old backup {}", stale.getValue(), e);
+            }
+        }
+    }
+
+    private static Instant parseBackupTimestamp(String timestamp) {
+        Matcher m = BACKUP_TIMESTAMP.matcher(timestamp);
+        if (!m.matches()) {
+            return null;
+        }
+        String fraction = m.group(5) == null ? "" : "." + m.group(5);
+        try {
+            return Instant.parse(m.group(1) + "T" + m.group(2) + ":" + m.group(3) + ":" + m.group(4) + fraction + "Z");
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     public String hashContent(String content) {
