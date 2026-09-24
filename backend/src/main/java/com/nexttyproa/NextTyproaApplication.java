@@ -1,5 +1,6 @@
 package com.nexttyproa;
 
+import com.nexttyproa.service.ParentProcessMonitor;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -8,6 +9,12 @@ import org.springframework.core.env.Environment;
 
 @SpringBootApplication
 public class NextTyproaApplication {
+
+    private final ParentProcessMonitor parentProcessMonitor;
+
+    public NextTyproaApplication(ParentProcessMonitor parentProcessMonitor) {
+        this.parentProcessMonitor = parentProcessMonitor;
+    }
 
     public static void main(String[] args) {
         SpringApplication.run(NextTyproaApplication.class, args);
@@ -21,5 +28,8 @@ public class NextTyproaApplication {
         System.err.println("NEXTTYPROA_PORT=" + port);
         System.err.println("NEXTTYPROA_TOKEN=" + token);
         System.err.flush();
+
+        // 启动父进程监控
+        parentProcessMonitor.startMonitoring();
     }
 }

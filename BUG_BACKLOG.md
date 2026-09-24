@@ -77,7 +77,7 @@ private Object lockFor(String relativePath) {
 
 ---
 
-### - [ ] BUG-P0-004: Electron 主进程崩溃 - 后端进程未正确清理
+### - [x] BUG-P0-004: Electron 主进程崩溃 - 后端进程未正确清理
 **问题概述**: 当 Electron 主进程异常退出（如 kill -9）时，后端 Java 进程可能成为孤儿进程继续运行，占用端口和内存。
 
 **涉及文件**:

@@ -247,6 +247,7 @@ function startBackend() {
       SERVER_PORT: '0',
       AUTH_TOKEN: token,
       VAULT_PATH: settings.lastWorkspace || '',
+      PARENT_PID: String(process.pid),
     };
 
     backendProcess = spawn(javaBin, ['-jar', jarPath], {
