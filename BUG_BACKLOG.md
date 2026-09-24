@@ -258,7 +258,7 @@ indexService.reindexVault(vaultRoot);
 
 ---
 
-### - [ ] BUG-P1-008: Electron before-quit 超时 - flush-save 可能丢失数据
+### - [x] BUG-P1-008: Electron before-quit 超时 - flush-save 可能丢失数据
 **问题概述**: 应用退出时给前端 3 秒时间保存，超时后强制退出，可能导致未保存内容丢失。
 
 **涉及文件**:

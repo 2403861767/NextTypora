@@ -1144,9 +1144,11 @@ export default function App() {
       void handleOpenAbsoluteFile(filePath);
     });
     const unsubFlush = window.nextTyproa?.onRequestFlushSave?.(() => {
-      void flushSave().finally(() => {
-        void window.nextTyproa?.notifyFlushSaveDone?.();
-      });
+      // 存在未解决的冲突时 flushSave 会跳过保存，需告知主进程仍有未保存修改
+      const blockedByConflict = Boolean(saveConflict) && isDirty;
+      void flushSave()
+        .catch(() => false)
+        .then((saved) => window.nextTyproa?.notifyFlushSaveDone?.(saved && !blockedByConflict));
     });
     const unsubSettings = window.nextTyproa?.onMenuOpenSettings?.(() => {
       setSettingsOpen(true);
@@ -1184,7 +1186,7 @@ export default function App() {
       unsubToggleSource?.();
       unsubToggleSidebar?.();
     };
-  }, [handleCreateMarkdown, handleExportHtml, handleExportPdf, handleOpenAbsoluteFile, handleOpenFile, handleOpenFolder, flushSave, selectedPath]);
+  }, [handleCreateMarkdown, handleExportHtml, handleExportPdf, handleOpenAbsoluteFile, handleOpenFile, handleOpenFolder, flushSave, isDirty, saveConflict, selectedPath]);
 
   const handleSelectUnsupportedFile = useCallback(async (path: string) => {
     try {

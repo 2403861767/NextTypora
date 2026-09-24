@@ -12,7 +12,9 @@ let backendConfig = { port: 8080, token: 'dev-token-change-me' };
 let pendingOpenFile = null;
 let pageReady = false;
 let quitting = false;
+let flushSavePending = false;
 let flushSaveTimeout = null;
+const FLUSH_SAVE_WATCHDOG_MS = 15000;
 
 const gotLock = app.requestSingleInstanceLock();
 if (process.platform === 'win32') {
@@ -512,6 +514,11 @@ function createWindow() {
     mainWindow = null;
   });
 
+  // 已确认退出时，忽略渲染进程 beforeunload 对关闭的拦截，否则 app.quit() 会被静默取消
+  mainWindow.webContents.on('will-prevent-unload', (event) => {
+    if (quitting) event.preventDefault();
+  });
+
   const onPageReady = () => {
     pageReady = true;
     deliverOpenFileIfReady();
@@ -615,13 +622,66 @@ ipcMain.handle('picgo:upload', async (_event, { serverUrl, secret, buffer, filen
   return picGoRequest(serverUrl, secret, '/upload', { method: 'POST', body: form });
 });
 
-ipcMain.handle('app:flush-save-done', () => {
-  if (flushSaveTimeout) {
-    clearTimeout(flushSaveTimeout);
-    flushSaveTimeout = null;
-  }
+function finishQuit() {
+  flushSavePending = false;
+  clearTimeout(flushSaveTimeout);
+  flushSaveTimeout = null;
   quitting = true;
   app.quit();
+}
+
+function armFlushSaveWatchdog() {
+  clearTimeout(flushSaveTimeout);
+  flushSaveTimeout = setTimeout(() => {
+    flushSaveTimeout = null;
+    if (!flushSavePending) return;
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      finishQuit();
+      return;
+    }
+    // 同步对话框：期间到达的 flush-save-done 会排队，待用户选择后再处理
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['继续等待', '强制退出'],
+      defaultId: 0,
+      cancelId: 0,
+      title: '正在保存',
+      message: '文档保存尚未完成',
+      detail: '强制退出可能丢失未保存的修改。',
+    });
+    if (!flushSavePending) return;
+    if (choice === 1) {
+      finishQuit();
+    } else {
+      armFlushSaveWatchdog();
+    }
+  }, FLUSH_SAVE_WATCHDOG_MS);
+}
+
+ipcMain.handle('app:flush-save-done', async (_event, result) => {
+  if (!flushSavePending) return;
+  clearTimeout(flushSaveTimeout);
+  flushSaveTimeout = null;
+
+  if (result?.ok !== false) {
+    finishQuit();
+    return;
+  }
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['取消退出', '仍然退出'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '保存失败',
+    message: '有修改未能保存',
+    detail: '仍然退出将丢失未保存的修改。',
+  });
+  if (response === 1) {
+    finishQuit();
+  } else {
+    flushSavePending = false;
+  }
 });
 
 ipcMain.handle('dialog:selectFolder', async () => {
@@ -778,11 +838,10 @@ app.on('before-quit', (event) => {
     return;
   }
   event.preventDefault();
+  if (flushSavePending) return;
+  flushSavePending = true;
   mainWindow.webContents.send('app:request-flush-save');
-  flushSaveTimeout = setTimeout(() => {
-    quitting = true;
-    app.quit();
-  }, 3000);
+  armFlushSaveWatchdog();
 });
 
 app.on('will-quit', () => {

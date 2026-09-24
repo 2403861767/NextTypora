@@ -62,7 +62,7 @@ contextBridge.exposeInMainWorld('nextTyproa', {
     ipcRenderer.on('app:request-flush-save', listener);
     return () => ipcRenderer.removeListener('app:request-flush-save', listener);
   },
-  notifyFlushSaveDone: () => ipcRenderer.invoke('app:flush-save-done'),
+  notifyFlushSaveDone: (ok) => ipcRenderer.invoke('app:flush-save-done', { ok: ok !== false }),
   revealInExplorer: (targetPath) => ipcRenderer.invoke('file:revealInExplorer', targetPath),
   testPicGoConnection: (config) => ipcRenderer.invoke('picgo:heartbeat', config),
   uploadToPicGo: (payload) => ipcRenderer.invoke('picgo:upload', payload),

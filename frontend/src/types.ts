@@ -209,7 +209,7 @@ declare global {
       onMenuToggleSidebar?: (callback: () => void) => () => void;
       onOpenFilePath: (callback: (filePath: string) => void) => () => void;
       onRequestFlushSave: (callback: () => void) => () => void;
-      notifyFlushSaveDone: () => Promise<void>;
+      notifyFlushSaveDone: (ok?: boolean) => Promise<void>;
       testPicGoConnection: (config: { serverUrl: string; secret?: string }) => Promise<unknown>;
       uploadToPicGo: (payload: {
         serverUrl: string;
