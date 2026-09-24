@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Crepe } from '@milkdown/crepe';
+import { getMarkdown } from '@milkdown/kit/utils';
 import { Milkdown, MilkdownProvider, useEditor, useInstance } from '@milkdown/react';
 import { useTyporaInlineCode } from '../hooks/useTyporaInlineCode';
 import { useTyporaImageSource } from '../hooks/useTyporaImageSource';
@@ -107,8 +108,6 @@ function EditorInner({
 
   useEditor(
     (root) => {
-      let isInitialUpdate = true;
-
       const uploadImage = (file: File) => uploadEditorImage(notePathRef.current, file);
       const resolveImage = (url: string) => proxyImageUrl(notePathRef.current, url);
 
@@ -147,14 +146,13 @@ function EditorInner({
       });
 
       crepe.on((listener) => {
+        // 载入笔记不会触发 markdownUpdated（它只在文档被修改后触发），所以挂载时主动把序列化后的
+        // 初始内容交给 onReady；此后每一次 markdownUpdated 都是用户编辑，必须走 onChange 才会被标记为未保存
+        listener.mounted((ctx) => {
+          onReadyRef.current?.(normalizeEditorImageMarkdown(getMarkdown()(ctx)));
+        });
         listener.markdownUpdated((_ctx, markdown) => {
-          const normalized = normalizeEditorImageMarkdown(markdown);
-          if (isInitialUpdate) {
-            isInitialUpdate = false;
-            onReadyRef.current?.(normalized);
-            return;
-          }
-          onChangeRef.current(normalized);
+          onChangeRef.current(normalizeEditorImageMarkdown(markdown));
         });
       });
 
