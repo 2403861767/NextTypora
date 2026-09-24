@@ -33,7 +33,7 @@ private Object lockFor(String relativePath) {
 
 ---
 
-### - [ ] BUG-P0-002: 后端崩溃 - 无 token 配置时启动失败
+### - [x] BUG-P0-002: 后端崩溃 - 无 token 配置时启动失败
 **问题概述**: Production 模式下如果 `AUTH_TOKEN` 环境变量未设置，后端会使用默认 dev token 启动，但 Electron main.js 期望读取日志中的 `NEXTTYPROA_TOKEN=`，如果未输出会导致启动超时失败。
 
 **涉及文件**:
