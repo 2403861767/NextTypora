@@ -103,6 +103,7 @@ function useDebouncedSave(
   baseHash?: string,
   onSaved?: (note: Note) => void,
   onConflict?: (conflict: SaveConflict) => void,
+  onFileMissing?: (path: string) => void,
 ) {
   const timerRef = useRef<number>();
   const stateRef = useRef({ path, content, enabled, baseHash });
@@ -124,11 +125,14 @@ function useDebouncedSave(
     } catch (error) {
       if (isSaveConflict(error)) {
         onConflict?.(toSaveConflict(error));
+      } else if (error instanceof ApiError && error.status === 404) {
+        // 文件已被移动或删除
+        onFileMissing?.(savePath);
       }
       setSaveStatus('error');
       return false;
     }
-  }, [onConflict, onSaved]);
+  }, [onConflict, onSaved, onFileMissing]);
 
   useEffect(() => {
     if (!enabled || !path) return;
@@ -375,11 +379,28 @@ export default function App() {
   });
   const [exportLoading, setExportLoading] = useState<'html' | 'pdf' | null>(null);
   const [messageApi, messageContextHolder] = message.useMessage();
+  const [fileMissingDialog, setFileMissingDialog] = useState<{ path: string; content: string } | null>(null);
 
   const openSeqRef = useRef(0);
   const editorRootRef = useRef<HTMLDivElement | null>(null);
   const pendingOpenPathRef = useRef<string | null>(null);
   const toolbarSearchInputRef = useRef<InputRef | null>(null);
+
+  const handleFileMissing = useCallback((missingPath: string) => {
+    // 标记该 tab 为 missing
+    setOpenTabs((prev) => prev.map((tab) => (
+      tab.path === missingPath
+        ? { ...tab, missing: true, saveStatus: 'error' as const }
+        : tab
+    )));
+
+    // 弹出对话框
+    setFileMissingDialog({ path: missingPath, content });
+
+    // 显示错误消息
+    setAlertMessage(`文件 ${missingPath} 已被移动或删除`);
+    setAlertOpen(true);
+  }, [content]);
 
   const { saveStatus, flush: flushSave } = useDebouncedSave(
     selectedPath,
@@ -391,6 +412,7 @@ export default function App() {
       setContentHash(note.contentHash);
     },
     setSaveConflict,
+    handleFileMissing,
   );
 
   const canDeleteSelectedNote = Boolean(selectedPath);
@@ -1451,9 +1473,18 @@ export default function App() {
       }
 
       const targetPath = resolveCreatePath(markdownName(rawName), createDialog.parentPath);
-      const note = await createNote(targetPath, '# 新笔记\n\n');
+      // 如果是从文件缺失对话框触发的另存为，使用保存的内容
+      const contentToSave = fileMissingDialog?.content || '# 新笔记\n\n';
+      const note = await createNote(targetPath, contentToSave);
       await refreshTree();
       messageApi.success('创建成功');
+
+      // 如果是从文件缺失对话框触发的，关闭旧标签页
+      if (fileMissingDialog) {
+        await handleCloseTab(fileMissingDialog.path);
+        setFileMissingDialog(null);
+      }
+
       await handleSelectNote(note.path);
     } catch (e) {
       showError(e instanceof Error ? e.message : '新建文件失败');
@@ -2304,6 +2335,43 @@ export default function App() {
               </option>
             ))}
           </select>
+        </Modal>
+
+        <Modal
+          title="文件已被移动或删除"
+          open={Boolean(fileMissingDialog)}
+          onOk={() => {
+            if (fileMissingDialog) {
+              // 打开另存为对话框
+              const suggestedName = fileMissingDialog.path.split('/').pop() || 'untitled.md';
+              setCreateName(suggestedName);
+              setCreateDialog({ kind: 'markdown', parentPath: '' });
+              setFileMissingDialog(null);
+            }
+          }}
+          onCancel={() => {
+            if (fileMissingDialog) {
+              // 关闭该标签页
+              void handleCloseTab(fileMissingDialog.path);
+              setFileMissingDialog(null);
+            }
+          }}
+          okText="另存为"
+          cancelText="关闭标签页"
+          centered
+        >
+          <Text>
+            文件 <Text code>{fileMissingDialog?.path}</Text> 已被移动或删除，无法保存您的编辑内容。
+          </Text>
+          <br />
+          <br />
+          <Text type="secondary">
+            您可以选择：
+            <ul style={{ marginTop: 8, paddingLeft: 20 }}>
+              <li>点击"另存为"将内容保存到新文件</li>
+              <li>点击"关闭标签页"放弃未保存的内容</li>
+            </ul>
+          </Text>
         </Modal>
 
         <Modal
