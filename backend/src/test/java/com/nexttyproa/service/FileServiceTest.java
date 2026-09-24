@@ -52,6 +52,28 @@ class FileServiceTest {
     }
 
     @Test
+    void windowsFileNameRulesRejectReservedCharactersNamesAndTrailingDotOrSpace() {
+        for (String name : List.of("test<>file.md", "a:b.md", "what?.md", "star*.md", "pipe|.md", "quote\".md", "tab\t.md",
+                "CON.md", "con", "Nul.txt", "COM1.md", "lpt9.markdown", "AUX .md", "note.", "note ")) {
+            assertThrows(com.nexttyproa.exception.BadRequestException.class,
+                    () -> FileService.validateWindowsFileName(name, true), name);
+        }
+    }
+
+    @Test
+    void windowsFileNameRulesAllowOrdinaryAndCjkNames() {
+        for (String name : List.of("hello.md", "中文 space-!@.md", "CONSOLE.md", "COM10.md", "my.con.md", ".hidden", "a b.c.md")) {
+            FileService.validateWindowsFileName(name, true);
+        }
+    }
+
+    @Test
+    void windowsFileNameRulesAreSkippedOnOtherPlatforms() {
+        FileService.validateWindowsFileName("what?.md", false);
+        FileService.validateWindowsFileName("CON.md", false);
+    }
+
+    @Test
     void readsAndPreservesGbkMarkdown(@TempDir Path vaultRoot) throws Exception {
         Path file = vaultRoot.resolve("gbk.md");
         Files.write(file, "# 标题\n中文内容".getBytes(Charset.forName("GBK")));

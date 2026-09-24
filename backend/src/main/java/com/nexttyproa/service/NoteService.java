@@ -4,6 +4,10 @@ import com.google.common.util.concurrent.Striped;
 import com.nexttyproa.dto.CreateNoteRequest;
 import com.nexttyproa.dto.NoteDto;
 import com.nexttyproa.dto.SaveNoteRequest;
+import com.nexttyproa.exception.BadRequestException;
+import com.nexttyproa.exception.ConflictException;
+import com.nexttyproa.exception.NotFoundException;
+import com.nexttyproa.exception.NoteConflictException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -18,6 +22,7 @@ import java.util.concurrent.locks.Lock;
 public class NoteService {
 
     private static final Logger log = LoggerFactory.getLogger(NoteService.class);
+    private static final Logger audit = LoggerFactory.getLogger("com.nexttyproa.audit");
 
     private final WorkspaceService workspaceService;
     private final FileService fileService;
@@ -86,7 +91,11 @@ public class NoteService {
                     ? currentRead.encoding()
                     : request.getEncoding();
             boolean hasBom = request.getHasBom() == null ? currentRead.hasBom() : request.getHasBom();
-            fileService.writeFileAtomic(file, nextContent, encoding, hasBom, fileService.exists(file));
+            boolean existed = fileService.exists(file);
+            fileService.writeFileAtomic(file, nextContent, encoding, hasBom, existed);
+            if (existed && request.isForce()) {
+                audit.warn("Force-saved note, overwriting any external changes: {}", relativePath);
+            }
 
             // 更新搜索索引（失败不影响保存操作，但记录错误日志）
             try {
@@ -111,11 +120,13 @@ public class NoteService {
             }
             relativePath = relativePath + ".md";
         }
+        FileService.validateNewPath(relativePath);
         Path file = fileService.resolveSafe(vaultRoot, relativePath);
         if (fileService.exists(file)) {
             throw new ConflictException("Note already exists: " + relativePath);
         }
         fileService.writeFileAtomic(file, content);
+        audit.info("Created note: {}", relativePath);
 
         // 更新搜索索引（失败不影响创建操作，但记录错误日志）
         try {
@@ -137,6 +148,7 @@ public class NoteService {
         }
         fileService.deleteFile(file);
         fileService.deleteEmptyParents(vaultRoot, file);
+        audit.info("Deleted note: {}", normalized);
         indexService.removeNote(normalized);
     }
 
@@ -177,48 +189,5 @@ public class NoteService {
 
     private Lock lockFor(String relativePath) {
         return pathLocks.get(relativePath);
-    }
-
-    public static class NotFoundException extends RuntimeException {
-        public NotFoundException(String message) {
-            super(message);
-        }
-    }
-
-    public static class ConflictException extends RuntimeException {
-        public ConflictException(String message) {
-            super(message);
-        }
-    }
-
-    public static class BadRequestException extends RuntimeException {
-        public BadRequestException(String message) {
-            super(message);
-        }
-    }
-
-    public static class NoteConflictException extends RuntimeException {
-        private final String path;
-        private final String currentHash;
-        private final Instant currentUpdatedAt;
-
-        public NoteConflictException(String message, String path, String currentHash, Instant currentUpdatedAt) {
-            super(message);
-            this.path = path;
-            this.currentHash = currentHash;
-            this.currentUpdatedAt = currentUpdatedAt;
-        }
-
-        public String getPath() {
-            return path;
-        }
-
-        public String getCurrentHash() {
-            return currentHash;
-        }
-
-        public Instant getCurrentUpdatedAt() {
-            return currentUpdatedAt;
-        }
     }
 }

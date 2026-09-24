@@ -48,6 +48,7 @@ import {
   saveNote,
   setWorkspace,
   ApiError,
+  describeError,
 } from './api';
 import { FileTree } from './components/FileTree';
 import type { FileTreeSortMode } from './components/FileTree';
@@ -66,6 +67,7 @@ import { useFindReplace } from './hooks/useFindReplace';
 import { useSearchPanel } from './hooks/useSearchPanel';
 import type { AppThemeId, EditorTab, ImageUploadSettings, Note, PreferenceSettings, RecentFileRef, RecentWorkspaceRef, TreeNode, TreeSelection, WritingModeSettings } from './types';
 import { loadAndApplyPreferenceSettings, patchStoredAppSettings } from './utils/appSettings';
+import { windowsFileNameError, windowsPathError } from './utils/fileName';
 import { joinLocalPath, parseLocalMarkdownPath, foldersEqual } from './utils/localPath';
 import { scrollToHeadingLine } from './utils/headings';
 import { countDocumentWords } from './utils/wordCount';
@@ -108,6 +110,7 @@ function useDebouncedSave(
   const timerRef = useRef<number>();
   const stateRef = useRef({ path, content, enabled, baseHash });
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [saveError, setSaveError] = useState('');
 
   stateRef.current = { path, content, enabled, baseHash };
 
@@ -120,6 +123,7 @@ function useDebouncedSave(
     try {
       const note = await saveNote(savePath, saveContent, saveBaseHash);
       setSaveStatus('saved');
+      setSaveError('');
       onSaved?.(note);
       return true;
     } catch (error) {
@@ -129,6 +133,7 @@ function useDebouncedSave(
         // 文件已被移动或删除
         onFileMissing?.(savePath);
       }
+      setSaveError(describeError(error, '保存失败'));
       setSaveStatus('error');
       return false;
     }
@@ -147,7 +152,7 @@ function useDebouncedSave(
     return () => window.clearTimeout(timerRef.current);
   }, [path, content, enabled, flush]);
 
-  return { saveStatus, flush };
+  return { saveStatus, saveError, flush };
 }
 
 interface SaveConflict {
@@ -171,13 +176,13 @@ function toSaveConflict(error: ApiError): SaveConflict {
   };
 }
 
-function SaveIndicator({ status }: { status: 'idle' | 'saving' | 'saved' | 'error' }) {
+function SaveIndicator({ status, error }: { status: 'idle' | 'saving' | 'saved' | 'error'; error?: string }) {
   if (status === 'idle') return null;
   const label =
     status === 'saving' ? '保存中…' :
     status === 'saved' ? '已保存' :
     '保存失败';
-  return <span className={`save-indicator save-${status}`}>{label}</span>;
+  return <span className={`save-indicator save-${status}`} title={status === 'error' ? error : undefined}>{label}</span>;
 }
 
 function noteDisplayName(path: string): string {
@@ -402,7 +407,7 @@ export default function App() {
     setAlertOpen(true);
   }, [content]);
 
-  const { saveStatus, flush: flushSave } = useDebouncedSave(
+  const { saveStatus, saveError, flush: flushSave } = useDebouncedSave(
     selectedPath,
     content,
     ready && !saveConflict && content !== loadedContent,
@@ -633,7 +638,7 @@ export default function App() {
     try {
       await window.nextTyproa?.revealInExplorer?.(absolutePath);
     } catch (e) {
-      showError(e instanceof Error ? e.message : '无法在资源管理器中显示');
+      showError(describeError(e, '无法在资源管理器中显示'));
     }
   }, [showError]);
 
@@ -696,6 +701,14 @@ export default function App() {
     const nodes = await getTree();
     setTree(nodes);
   }, []);
+
+  // 文件操作失败时按错误类型提示；404 说明文件树已过期，顺便刷新以移除失效节点
+  const showFileOperationError = useCallback((error: unknown, fallback: string) => {
+    showError(describeError(error, fallback));
+    if (error instanceof ApiError && error.kind === 'notFound') {
+      void refreshTree().catch(() => undefined);
+    }
+  }, [refreshTree, showError]);
 
   const refreshWorkspaceTree = useCallback(async () => {
     const nodes = await refreshWorkspace();
@@ -926,7 +939,7 @@ export default function App() {
         if (!dir || !relativePath) return;
         await openNoteAt(dir, relativePath);
       } catch (e) {
-        showError(e instanceof Error ? e.message : '打开文件失败');
+        showError(describeError(e, '打开文件失败'));
       }
     })();
   }, [ready, openNoteAt, showError]);
@@ -1002,7 +1015,7 @@ export default function App() {
       setCreateName(kind === 'markdown' ? 'untitled.md' : '新建文件夹');
       setCreateDialog({ kind, parentPath: parentPath ?? getCreateParentPath() });
     } catch (e) {
-      showError(e instanceof Error ? e.message : '无法新建文件');
+      showError(describeError(e, '无法新建文件'));
     }
   }, [ensureWorkspace, getCreateParentPath, showError]);
 
@@ -1032,7 +1045,7 @@ export default function App() {
       await clearLastOpenedFile();
       await applyWorkspace(selected);
     } catch (e) {
-      showError(e instanceof Error ? e.message : '打开文件夹失败');
+      showError(describeError(e, '打开文件夹失败'));
     }
   }, [applyWorkspace, clearCurrentDocumentState, clearLastOpenedFile, flushSave, showError]);
 
@@ -1047,7 +1060,7 @@ export default function App() {
       if (!picked) return;
       await openNoteAt(picked.dir, picked.relativePath);
     } catch (e) {
-      showError(e instanceof Error ? e.message : '打开文件失败');
+      showError(describeError(e, '打开文件失败'));
     }
   }, [openNoteAt, showError]);
 
@@ -1061,7 +1074,7 @@ export default function App() {
       if (!dir || !relativePath) return;
       await openNoteAt(dir, relativePath);
     } catch (e) {
-      showError(e instanceof Error ? e.message : '打开文件失败');
+      showError(describeError(e, '打开文件失败'));
     }
   }, [openNoteAt, ready, showError]);
 
@@ -1106,7 +1119,7 @@ export default function App() {
       downloadTextFile(exported.html, defaultPath, 'text/html;charset=utf-8');
       messageApi.success('HTML 已导出');
     } catch (e) {
-      showError(e instanceof Error ? e.message : '导出 HTML 失败');
+      showError(describeError(e, '导出 HTML 失败'));
     } finally {
       setExportLoading(null);
     }
@@ -1131,7 +1144,7 @@ export default function App() {
         messageApi.success('PDF 已导出');
       }
     } catch (e) {
-      showError(e instanceof Error ? e.message : '导出 PDF 失败');
+      showError(describeError(e, '导出 PDF 失败'));
     } finally {
       setExportLoading(null);
     }
@@ -1211,7 +1224,7 @@ export default function App() {
       setSearchResults([]);
       setSearchOpen(false);
     } catch (e) {
-      showError(e instanceof Error ? e.message : '打开文件失败');
+      showError(describeError(e, '打开文件失败'));
     }
   }, [workspacePath, clearMarkdownState, flushSave, showError]);
 
@@ -1228,7 +1241,7 @@ export default function App() {
       }
       await openNoteAt(workspacePath, path);
     } catch (e) {
-      showError(e instanceof Error ? e.message : '打开笔记失败');
+      showError(describeError(e, '打开笔记失败'));
     }
   }, [workspacePath, openNoteAt, handleSelectUnsupportedFile, showError]);
 
@@ -1251,7 +1264,7 @@ export default function App() {
         showError('文件缺失或已被移动，已保留标签用于确认');
         return false;
       }
-      showError(e instanceof Error ? e.message : '打开标签页失败');
+      showError(describeError(e, '打开标签页失败'));
       return false;
     }
   }, [clearMarkdownState, markEditorTabMissing, openNoteAt, showError, workspacePath]);
@@ -1438,7 +1451,7 @@ export default function App() {
         }
       }
     } catch (e) {
-      showError(e instanceof Error ? e.message : '移动失败');
+      showFileOperationError(e, '移动失败');
     }
   }, [
     clearMarkdownState,
@@ -1451,6 +1464,7 @@ export default function App() {
     setSearchOpen,
     setSearchResults,
     showError,
+    showFileOperationError,
     syncTabsAfterPathChange,
     unsupportedPreviewPath,
     workspacePath,
@@ -1460,6 +1474,12 @@ export default function App() {
     if (!createDialog) return;
     const rawName = createName.trim();
     if (!rawName) return;
+    const nameError = windowsPathError(createDialog.kind === 'folder' ? rawName : markdownName(rawName));
+    if (nameError) {
+      // 保持对话框打开，方便用户直接修改名称
+      messageApi.warning(nameError);
+      return;
+    }
     setCreateDialog(null);
     try {
       const saved = await flushSave();
@@ -1493,7 +1513,7 @@ export default function App() {
 
       await handleSelectNote(note.path);
     } catch (e) {
-      showError(e instanceof Error ? e.message : '新建文件失败');
+      showFileOperationError(e, '新建文件失败');
     }
   };
 
@@ -1515,6 +1535,12 @@ export default function App() {
     if (!renameTarget) return;
     const nextName = renameName.trim();
     if (!nextName) return;
+    const nameError = windowsFileNameError(nextName);
+    if (nameError) {
+      // 保持对话框打开，方便用户直接修改名称
+      messageApi.warning(nameError);
+      return;
+    }
     const target = renameTarget;
     const currentMarkdownPath = selectedPath;
     const currentUnsupportedPath = unsupportedPreviewPath;
@@ -1567,7 +1593,7 @@ export default function App() {
         }
       }
     } catch (e) {
-      showError(e instanceof Error ? e.message : '重命名失败');
+      showFileOperationError(e, '重命名失败');
     }
   };
 
@@ -1610,7 +1636,7 @@ export default function App() {
         setSelectedTreeItem(null);
       }
     } catch (e) {
-      showError(e instanceof Error ? e.message : '删除失败');
+      showFileOperationError(e, '删除失败');
     }
   };
 
@@ -1889,7 +1915,7 @@ export default function App() {
           </div>
 
           <div className="toolbar-section toolbar-right">
-            <SaveIndicator status={selectedPath ? saveStatus : 'idle'} />
+            <SaveIndicator status={selectedPath ? saveStatus : 'idle'} error={saveError} />
             <Segmented
               className="editor-mode-toggle"
               size="small"

@@ -1,5 +1,6 @@
 package com.nexttyproa.service;
 
+import com.nexttyproa.exception.BadRequestException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -42,6 +43,9 @@ public class FileService {
     private static final int MAX_BACKUPS_PER_FILE = 10;
     // Instant.toString() with ':' removed and '.' replaced by '-', e.g. 2026-09-24T101530-123456Z
     private static final Pattern BACKUP_TIMESTAMP = Pattern.compile("(\\d{4}-\\d{2}-\\d{2})T(\\d{2})(\\d{2})(\\d{2})(?:-(\\d{1,9}))?Z");
+    private static final boolean IS_WINDOWS = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
+    private static final String WINDOWS_INVALID_CHARS = "<>:\"/\\|?*";
+    private static final Pattern WINDOWS_RESERVED_NAME = Pattern.compile("(?i)CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]");
 
     /**
      * Normalize path separators to forward slashes for cross-platform consistency.
@@ -53,6 +57,47 @@ public class FileService {
     public static String normalizePathSeparators(String path) {
         if (path == null) return "";
         return path.replace('\\', '/').replaceAll("^/+", "");
+    }
+
+    /**
+     * Validate every segment of a path that is about to be created. Only enforced on Windows.
+     */
+    public static void validateNewPath(String relativePath) {
+        for (String segment : normalizePathSeparators(relativePath).split("/")) {
+            if (segment.isEmpty() || ".".equals(segment) || "..".equals(segment)) {
+                continue;
+            }
+            validateWindowsFileName(segment);
+        }
+    }
+
+    /**
+     * Reject names Windows cannot store: reserved characters, device names (CON, COM1, ...) and a
+     * trailing dot or space (which Windows silently strips). No-op on other platforms.
+     */
+    public static void validateWindowsFileName(String name) {
+        validateWindowsFileName(name, IS_WINDOWS);
+    }
+
+    static void validateWindowsFileName(String name, boolean windows) {
+        if (!windows || name == null) {
+            return;
+        }
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (c < 0x20 || WINDOWS_INVALID_CHARS.indexOf(c) >= 0) {
+                String shown = c < 0x20 ? String.format("\\u%04x", (int) c) : String.valueOf(c);
+                throw new BadRequestException("Name contains a character not allowed on Windows (" + shown + "): " + name);
+            }
+        }
+        if (name.endsWith(".") || name.endsWith(" ")) {
+            throw new BadRequestException("Name must not end with a dot or space on Windows: " + name);
+        }
+        int dot = name.indexOf('.');
+        String baseName = (dot >= 0 ? name.substring(0, dot) : name).stripTrailing();
+        if (WINDOWS_RESERVED_NAME.matcher(baseName).matches()) {
+            throw new BadRequestException("Name is reserved on Windows: " + name);
+        }
     }
 
     public Path resolveSafe(Path vaultRoot, String relativePath) throws IOException {

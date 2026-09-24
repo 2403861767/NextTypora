@@ -26,10 +26,23 @@ function baseUrl(): string {
   return `http://127.0.0.1:${config.port}`;
 }
 
+export type ApiErrorKind = 'network' | 'unauthorized' | 'badRequest' | 'notFound' | 'conflict' | 'server' | 'unknown';
+
+function apiErrorKind(status: number): ApiErrorKind {
+  if (status === 0) return 'network';
+  if (status === 401 || status === 403) return 'unauthorized';
+  if (status === 404) return 'notFound';
+  if (status === 409) return 'conflict';
+  if (status >= 500) return 'server';
+  if (status >= 400) return 'badRequest';
+  return 'unknown';
+}
+
 export class ApiError extends Error {
   status: number;
   body: unknown;
   code?: string;
+  kind: ApiErrorKind;
 
   constructor(message: string, status: number, body: unknown, code?: string) {
     super(message);
@@ -37,18 +50,43 @@ export class ApiError extends Error {
     this.status = status;
     this.body = body;
     this.code = code;
+    this.kind = apiErrorKind(status);
+  }
+}
+
+/** 按错误类型生成面向用户的提示，fallback 描述失败的操作（如“删除失败”）。 */
+export function describeError(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiError)) {
+    return error instanceof Error && error.message ? `${fallback}：${error.message}` : fallback;
+  }
+  switch (error.kind) {
+    case 'network':
+      return `${fallback}：无法连接到后端服务，请确认应用仍在运行后重试`;
+    case 'unauthorized':
+      return `${fallback}：后端身份验证失败，请重启应用`;
+    case 'notFound':
+      return `${fallback}：文件或文件夹不存在，可能已被移动或删除（${error.message}）`;
+    case 'server':
+      return `${fallback}：后端内部错误（HTTP ${error.status}）${error.message}，详细信息请查看后端日志`;
+    default:
+      return `${fallback}：${error.message}`;
   }
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${baseUrl()}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Auth-Token': config.token,
-      ...(options.headers || {}),
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl()}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Auth-Token': config.token,
+        ...(options.headers || {}),
+      },
+    });
+  } catch (error) {
+    throw new ApiError(error instanceof Error ? error.message : 'Network error', 0, undefined, 'NETWORK_ERROR');
+  }
   const text = await response.text();
 
   if (!response.ok) {

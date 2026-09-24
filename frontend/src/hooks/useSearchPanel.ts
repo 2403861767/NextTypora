@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { getSearchIndexStatus, searchNotes } from '../api';
+import { describeError, getSearchIndexStatus, searchNotes } from '../api';
 import type { SearchIndexStatus, SearchResult, SearchSort } from '../types';
 
 const SEARCH_PAGE_SIZE = 12;
@@ -42,7 +42,7 @@ export function useSearchPanel(showError: (message: string) => void) {
       setSearchOffset(response.offset);
       setSearchSort(response.sort);
     } catch (e) {
-      showError(e instanceof Error ? e.message : '搜索失败');
+      showError(describeError(e, '搜索失败'));
     } finally {
       setSearchLoading(false);
     }

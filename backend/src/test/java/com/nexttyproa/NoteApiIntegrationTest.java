@@ -8,9 +8,14 @@ import com.nexttyproa.dto.SaveNoteRequest;
 import com.nexttyproa.dto.WorkspaceRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -21,6 +26,7 @@ import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
@@ -37,6 +43,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@ExtendWith(OutputCaptureExtension.class)
 class NoteApiIntegrationTest {
 
     private static final String TOKEN = "test-token";
@@ -201,6 +208,69 @@ class NoteApiIntegrationTest {
                         .content(objectMapper.writeValueAsString(renameRequest)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error", containsString("Path already exists")));
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void renameToWindowsInvalidNameIsRejected() throws Exception {
+        configureWorkspace();
+        Files.writeString(tempVault.resolve("source.md"), "# Source");
+
+        RenamePathRequest renameRequest = new RenamePathRequest();
+        renameRequest.setPath("source.md");
+        renameRequest.setNewName("test<>file.md");
+
+        mockMvc.perform(put("/api/files/rename")
+                        .header("X-Auth-Token", TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(renameRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error", containsString("not allowed on Windows")));
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void createWithWindowsReservedNameIsRejected() throws Exception {
+        configureWorkspace();
+
+        CreateNoteRequest createRequest = new CreateNoteRequest();
+        createRequest.setPath("docs/CON.md");
+        mockMvc.perform(post("/api/note")
+                        .header("X-Auth-Token", TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error", containsString("reserved on Windows")));
+
+        CreateFolderRequest folderRequest = new CreateFolderRequest();
+        folderRequest.setPath("what?/inner");
+        mockMvc.perform(post("/api/files/folder")
+                        .header("X-Auth-Token", TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(folderRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error", containsString("not allowed on Windows")));
+    }
+
+    @Test
+    void fileOperationsAreWrittenToTheAuditLog(CapturedOutput output) throws Exception {
+        configureWorkspace();
+        Files.writeString(tempVault.resolve("old.md"), "# Old");
+
+        RenamePathRequest renameRequest = new RenamePathRequest();
+        renameRequest.setPath("old.md");
+        renameRequest.setNewName("new.md");
+        mockMvc.perform(put("/api/files/rename")
+                        .header("X-Auth-Token", TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(renameRequest)))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/files")
+                        .param("path", "new.md")
+                        .header("X-Auth-Token", TOKEN))
+                .andExpect(status().isOk());
+
+        assertThat(output.getOut()).contains("Renamed file: old.md -> new.md", "Deleted file: new.md");
     }
 
     @Test

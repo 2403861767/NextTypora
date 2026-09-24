@@ -5,6 +5,11 @@ import com.nexttyproa.dto.FileOperationDto;
 import com.nexttyproa.dto.MovePathRequest;
 import com.nexttyproa.dto.RenamePathRequest;
 import com.nexttyproa.dto.TreeNodeDto;
+import com.nexttyproa.exception.BadRequestException;
+import com.nexttyproa.exception.ConflictException;
+import com.nexttyproa.exception.NotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -19,6 +24,8 @@ import java.util.List;
 @Service
 public class FileSystemService {
 
+    private static final Logger audit = LoggerFactory.getLogger("com.nexttyproa.audit");
+
     private final WorkspaceService workspaceService;
     private final FileService fileService;
     private final IndexService indexService;
@@ -32,13 +39,16 @@ public class FileSystemService {
     public FileOperationDto createFolder(CreateFolderRequest request) throws IOException {
         Path vaultRoot = requireVault();
         String normalized = normalizePath(request.getPath());
+        FileService.validateNewPath(normalized);
         Path folder = resolveSafe(vaultRoot, normalized);
         rejectRoot(vaultRoot, folder, "Cannot create the vault root");
         if (Files.exists(folder, LinkOption.NOFOLLOW_LINKS)) {
             throw new ConflictException("Path already exists: " + normalized);
         }
         Files.createDirectories(folder);
-        return new FileOperationDto(fileService.relativePathString(vaultRoot, folder), true);
+        String relativePath = fileService.relativePathString(vaultRoot, folder);
+        audit.info("Created folder: {}", relativePath);
+        return new FileOperationDto(relativePath, true);
     }
 
     public FileOperationDto deletePath(String path) throws IOException {
@@ -60,6 +70,7 @@ public class FileSystemService {
                 indexService.removeNote(normalized);
             }
         }
+        audit.info("Deleted {}: {}", directory ? "folder" : "file", normalized);
         return new FileOperationDto(normalized, directory);
     }
 
@@ -84,6 +95,7 @@ public class FileSystemService {
         boolean directory = Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS);
         Files.move(source, target);
         String newRelativePath = fileService.relativePathString(vaultRoot, target);
+        audit.info("Renamed {}: {} -> {}", directory ? "folder" : "file", normalized, newRelativePath);
         if (directory) {
             indexService.reindexVault(vaultRoot);
         } else {
@@ -128,6 +140,7 @@ public class FileSystemService {
 
         Files.move(source, target);
         String newRelativePath = fileService.relativePathString(vaultRoot, target);
+        audit.info("Moved {}: {} -> {}", directory ? "folder" : "file", normalized, newRelativePath);
         if (directory) {
             indexService.reindexVault(vaultRoot);
         } else {
@@ -197,24 +210,7 @@ public class FileSystemService {
         if (newName.contains("/") || newName.contains("\\")) {
             throw new BadRequestException("New name must not contain path separators");
         }
+        FileService.validateWindowsFileName(newName);
         return newName;
-    }
-
-    public static class NotFoundException extends RuntimeException {
-        public NotFoundException(String message) {
-            super(message);
-        }
-    }
-
-    public static class ConflictException extends RuntimeException {
-        public ConflictException(String message) {
-            super(message);
-        }
-    }
-
-    public static class BadRequestException extends RuntimeException {
-        public BadRequestException(String message) {
-            super(message);
-        }
     }
 }

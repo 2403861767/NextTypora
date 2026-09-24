@@ -2,6 +2,8 @@ package com.nexttyproa.service;
 
 import com.nexttyproa.dto.ExportHtmlDto;
 import com.nexttyproa.dto.ExportHtmlRequest;
+import com.nexttyproa.exception.BadRequestException;
+import com.nexttyproa.exception.NotFoundException;
 import com.vladsch.flexmark.ext.autolink.AutolinkExtension;
 import com.vladsch.flexmark.ext.footnotes.FootnoteExtension;
 import com.vladsch.flexmark.ext.gfm.strikethrough.StrikethroughExtension;
@@ -48,15 +50,15 @@ public class ExportService {
         Path vaultRoot = requireVault();
         String normalized = normalizePath(request.getPath());
         if (!fileService.isMarkdownPath(normalized)) {
-            throw new NoteService.BadRequestException("Only Markdown files are supported: " + normalized);
+            throw new BadRequestException("Only Markdown files are supported: " + normalized);
         }
 
         Path file = resolveSafe(vaultRoot, normalized);
         if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
-            throw new NoteService.NotFoundException("Note not found: " + request.getPath());
+            throw new NotFoundException("Note not found: " + request.getPath());
         }
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
-            throw new NoteService.BadRequestException("Path is not a file: " + normalized);
+            throw new BadRequestException("Path is not a file: " + normalized);
         }
 
         String markdown = fileService.readFile(file);
@@ -220,7 +222,7 @@ public class ExportService {
     private Path requireVault() {
         Path vaultRoot = workspaceService.getVaultRoot();
         if (vaultRoot == null) {
-            throw new NoteService.BadRequestException("Workspace not configured. Set a vault path first.");
+            throw new BadRequestException("Workspace not configured. Set a vault path first.");
         }
         return vaultRoot;
     }
@@ -229,7 +231,7 @@ public class ExportService {
         try {
             return fileService.resolveSafe(vaultRoot, relativePath);
         } catch (SecurityException e) {
-            throw new NoteService.BadRequestException(e.getMessage());
+            throw new BadRequestException(e.getMessage());
         }
     }
 

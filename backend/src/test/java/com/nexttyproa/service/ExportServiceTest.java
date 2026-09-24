@@ -3,6 +3,7 @@ package com.nexttyproa.service;
 import com.nexttyproa.config.AppProperties;
 import com.nexttyproa.dto.ExportHtmlDto;
 import com.nexttyproa.dto.ExportHtmlRequest;
+import com.nexttyproa.exception.BadRequestException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -125,7 +126,7 @@ class ExportServiceTest {
         ExportService service = exportService(vaultRoot);
         ExportHtmlRequest request = request("note.txt");
 
-        assertThrows(NoteService.BadRequestException.class, () -> service.exportHtml(request));
+        assertThrows(BadRequestException.class, () -> service.exportHtml(request));
     }
 
     @Test
@@ -133,7 +134,7 @@ class ExportServiceTest {
         ExportService service = exportService(vaultRoot);
         ExportHtmlRequest request = request("../outside.md");
 
-        assertThrows(NoteService.BadRequestException.class, () -> service.exportHtml(request));
+        assertThrows(BadRequestException.class, () -> service.exportHtml(request));
     }
 
     private ExportHtmlDto export(Path vaultRoot, String relativePath, String markdown) throws Exception {

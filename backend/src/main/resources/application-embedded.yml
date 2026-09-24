@@ -1,3 +1,8 @@
 nexttyproa:
   auth-token: ${AUTH_TOKEN:}
   vault-path: ${VAULT_PATH:}
+
+logging:
+  file:
+    # Set by Electron to <userData>/logs/backend.log; empty disables file logging
+    name: ${NEXTTYPROA_LOG_FILE:}

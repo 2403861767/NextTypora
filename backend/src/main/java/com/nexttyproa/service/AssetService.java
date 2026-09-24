@@ -1,5 +1,7 @@
 package com.nexttyproa.service;
 
+import com.nexttyproa.exception.BadRequestException;
+import com.nexttyproa.exception.NotFoundException;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.http.MediaType;
@@ -142,16 +144,4 @@ public class AssetService {
     }
 
     public record UploadResult(String path, String markdownRef) {}
-
-    public static class NotFoundException extends RuntimeException {
-        public NotFoundException(String message) {
-            super(message);
-        }
-    }
-
-    public static class BadRequestException extends RuntimeException {
-        public BadRequestException(String message) {
-            super(message);
-        }
-    }
 }

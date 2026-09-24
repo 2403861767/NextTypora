@@ -265,6 +265,7 @@ function startBackend() {
       AUTH_TOKEN: token,
       VAULT_PATH: settings.lastWorkspace || '',
       PARENT_PID: String(process.pid),
+      NEXTTYPROA_LOG_FILE: path.join(app.getPath('logs'), 'backend.log'),
     };
 
     backendProcess = spawn(javaBin, ['-jar', jarPath], {

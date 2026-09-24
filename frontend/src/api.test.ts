@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, deleteNote, deletePath, exportHtml, getNote, movePath, refreshWorkspace, searchNotes } from './api';
+import { ApiError, deleteNote, deletePath, describeError, exportHtml, getNote, movePath, refreshWorkspace, searchNotes } from './api';
 
 function jsonResponse(body: unknown) {
   return Promise.resolve({
@@ -152,6 +152,38 @@ describe('api wrappers', () => {
       status: 503,
       body: 'Backend unavailable',
     } satisfies Partial<ApiError>);
+  });
+
+  it('turns fetch failures into network ApiErrors', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))));
+
+    await expect(getNote('docs/a.md')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 0,
+      kind: 'network',
+      code: 'NETWORK_ERROR',
+    } satisfies Partial<ApiError>);
+  });
+
+  it('classifies API errors by HTTP status', () => {
+    expect(new ApiError('x', 401, undefined).kind).toBe('unauthorized');
+    expect(new ApiError('x', 400, undefined).kind).toBe('badRequest');
+    expect(new ApiError('x', 404, undefined).kind).toBe('notFound');
+    expect(new ApiError('x', 409, undefined).kind).toBe('conflict');
+    expect(new ApiError('x', 500, undefined).kind).toBe('server');
+    expect(new ApiError('x', 503, undefined).kind).toBe('server');
+  });
+
+  it('describes each error kind with a specific user message', () => {
+    expect(describeError(new ApiError('Failed to fetch', 0, undefined), '删除失败')).toContain('无法连接到后端服务');
+    expect(describeError(new ApiError('Unauthorized', 401, undefined), '删除失败')).toContain('身份验证失败');
+    expect(describeError(new ApiError('Path not found: a.md', 404, undefined), '删除失败'))
+      .toBe('删除失败：文件或文件夹不存在，可能已被移动或删除（Path not found: a.md）');
+    expect(describeError(new ApiError('Disk full', 500, undefined), '保存失败')).toContain('HTTP 500');
+    expect(describeError(new ApiError('Path already exists: b.md', 409, undefined), '重命名失败'))
+      .toBe('重命名失败：Path already exists: b.md');
+    expect(describeError(new Error('boom'), '打开失败')).toBe('打开失败：boom');
+    expect(describeError('weird', '打开失败')).toBe('打开失败');
   });
 
   it('encodes note paths in query string endpoints', async () => {
