@@ -32,7 +32,7 @@ public class NoteService {
 
     public NoteDto getNote(String relativePath) throws IOException {
         Path vaultRoot = requireVault();
-        String normalized = normalizePath(relativePath);
+        String normalized = FileService.normalizePathSeparators(relativePath);
         requireMarkdownPath(normalized);
         Path file = fileService.resolveSafe(vaultRoot, normalized);
         if (!fileService.exists(file)) {
@@ -44,7 +44,7 @@ public class NoteService {
 
     public NoteDto saveNote(SaveNoteRequest request) throws IOException {
         Path vaultRoot = requireVault();
-        String relativePath = normalizePath(request.getPath());
+        String relativePath = FileService.normalizePathSeparators(request.getPath());
         requireMarkdownPath(relativePath);
         Lock lock = lockFor(relativePath);
         lock.lock();
@@ -103,7 +103,7 @@ public class NoteService {
 
     public NoteDto createNote(CreateNoteRequest request) throws IOException {
         Path vaultRoot = requireVault();
-        String relativePath = normalizePath(request.getPath());
+        String relativePath = FileService.normalizePathSeparators(request.getPath());
         String content = request.getContent() == null ? "" : request.getContent();
         if (!fileService.isMarkdownPath(relativePath)) {
             if (hasExtension(relativePath)) {
@@ -129,7 +129,7 @@ public class NoteService {
 
     public void deleteNote(String relativePath) throws IOException {
         Path vaultRoot = requireVault();
-        String normalized = normalizePath(relativePath);
+        String normalized = FileService.normalizePathSeparators(relativePath);
         requireMarkdownPath(normalized);
         Path file = fileService.resolveSafe(vaultRoot, normalized);
         if (!fileService.exists(file)) {
@@ -161,10 +161,6 @@ public class NoteService {
             throw new BadRequestException("Workspace not configured. Set a vault path first.");
         }
         return vaultRoot;
-    }
-
-    private String normalizePath(String path) {
-        return path.replace('\\', '/').replaceAll("^/+", "");
     }
 
     private boolean hasExtension(String path) {

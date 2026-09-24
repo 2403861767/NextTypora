@@ -143,7 +143,7 @@ indexService.indexNote(vaultRoot, relativePath, nextContent);
 
 ---
 
-### - [ ] BUG-P1-003: 路径规范化不一致 - Windows 反斜杠混用
+### - [x] BUG-P1-003: 路径规范化不一致 - Windows 反斜杠混用
 **问题概述**: 前端和后端对路径规范化处理不一致，Windows 下 `\` 和 `/` 混用可能导致路径匹配失败。
 
 **涉及文件**:

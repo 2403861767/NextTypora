@@ -184,10 +184,7 @@ public class FileSystemService {
     }
 
     private String normalizePath(String path) {
-        if (path == null) {
-            return "";
-        }
-        return path.replace('\\', '/').replaceAll("^/+", "");
+        return FileService.normalizePathSeparators(path);
     }
 
     private String validateRenameTarget(String newName) {

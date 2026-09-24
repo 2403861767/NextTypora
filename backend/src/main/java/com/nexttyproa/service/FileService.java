@@ -28,13 +28,26 @@ public class FileService {
     private static final String DEFAULT_ENCODING = "UTF-8";
     private static final int BINARY_SCAN_LIMIT = 8192;
 
+    /**
+     * Normalize path separators to forward slashes for cross-platform consistency.
+     * Converts all backslashes to forward slashes and removes leading slashes.
+     *
+     * @param path the path to normalize
+     * @return normalized path with forward slashes, or empty string if path is null
+     */
+    public static String normalizePathSeparators(String path) {
+        if (path == null) return "";
+        return path.replace('\\', '/').replaceAll("^/+", "");
+    }
+
     public Path resolveSafe(Path vaultRoot, String relativePath) throws IOException {
+        String normalized = normalizePathSeparators(relativePath);
         Path root = vaultRoot.toAbsolutePath().normalize();
-        Path normalized = root.resolve(relativePath).normalize();
-        if (!normalized.startsWith(root)) {
+        Path resolved = root.resolve(normalized).normalize();
+        if (!resolved.startsWith(root)) {
             throw new SecurityException("Path traversal detected: " + relativePath);
         }
-        Path relative = root.relativize(normalized);
+        Path relative = root.relativize(resolved);
         if (relative.isAbsolute()) {
             throw new SecurityException("Path traversal detected: " + relativePath);
         }
@@ -48,7 +61,7 @@ public class FileService {
                 throw new SecurityException("Symbolic links are not allowed in workspace paths: " + relativePath);
             }
         }
-        return normalized;
+        return resolved;
     }
 
     public String readFile(Path file) throws IOException {
@@ -170,7 +183,7 @@ public class FileService {
     }
 
     public String relativePathString(Path vaultRoot, Path absolute) {
-        return toVaultRelative(vaultRoot, absolute).toString().replace('\\', '/');
+        return normalizePathSeparators(toVaultRelative(vaultRoot, absolute).toString());
     }
 
     public void deleteEmptyParents(Path vaultRoot, Path file) throws IOException {

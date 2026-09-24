@@ -234,10 +234,7 @@ public class ExportService {
     }
 
     private String normalizePath(String path) {
-        if (path == null) {
-            return "";
-        }
-        return path.replace('\\', '/').replaceAll("^/+", "");
+        return FileService.normalizePathSeparators(path);
     }
 
     private String normalizeLineEndings(String value) {

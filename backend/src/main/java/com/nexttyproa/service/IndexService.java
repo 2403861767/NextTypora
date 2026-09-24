@@ -48,7 +48,7 @@ public class IndexService {
         try {
             Path file = fileService.resolveSafe(vaultRoot, relativePath);
             if (Files.exists(file) && Files.size(file) > MAX_INDEX_BYTES) {
-                notes.remove(normalize(relativePath));
+                notes.remove(FileService.normalizePathSeparators(relativePath));
                 skippedFiles++;
                 lastIndexedAt = Instant.now();
                 return;
@@ -57,8 +57,8 @@ public class IndexService {
                     ? Files.getLastModifiedTime(file).toInstant()
                     : Instant.now();
             ParsedMarkdown parsed = parseMarkdown(relativePath, content);
-            notes.put(normalize(relativePath), new IndexedNote(
-                    normalize(relativePath),
+            notes.put(FileService.normalizePathSeparators(relativePath), new IndexedNote(
+                    FileService.normalizePathSeparators(relativePath),
                     parsed.title(),
                     content == null ? "" : content,
                     parsed.frontmatter(),
@@ -75,7 +75,7 @@ public class IndexService {
     }
 
     public void removeNote(String relativePath) {
-        notes.remove(normalize(relativePath));
+        notes.remove(FileService.normalizePathSeparators(relativePath));
         totalFiles = notes.size();
         lastIndexedAt = Instant.now();
     }
@@ -259,10 +259,6 @@ public class IndexService {
                 .filter(line -> !line.isEmpty())
                 .findFirst()
                 .orElse("");
-    }
-
-    private String normalize(String path) {
-        return path.replace('\\', '/').replaceAll("^/+", "");
     }
 
     private String normalizeQuery(String query) {

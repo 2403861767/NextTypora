@@ -86,15 +86,15 @@ public class AssetService {
     }
 
     public static String assetDirForNote(String notePath) {
-        String normalized = notePath.replace('\\', '/');
+        String normalized = FileService.normalizePathSeparators(notePath);
         int dot = normalized.lastIndexOf('.');
         String base = dot > 0 ? normalized.substring(0, dot) : normalized;
         return base + ".assets";
     }
 
     public static String markdownRefForNote(String notePath, String relativeAssetPath) {
-        String normalizedNote = notePath.replace('\\', '/');
-        String normalizedAsset = relativeAssetPath.replace('\\', '/');
+        String normalizedNote = FileService.normalizePathSeparators(notePath);
+        String normalizedAsset = FileService.normalizePathSeparators(relativeAssetPath);
         int lastSlash = normalizedNote.lastIndexOf('/');
         if (lastSlash >= 0) {
             String noteDir = normalizedNote.substring(0, lastSlash + 1);
@@ -115,7 +115,7 @@ public class AssetService {
         if (originalName == null || originalName.isBlank()) {
             return ".png";
         }
-        String cleaned = originalName.replace('\\', '/');
+        String cleaned = FileService.normalizePathSeparators(originalName);
         int slash = cleaned.lastIndexOf('/');
         if (slash >= 0) {
             cleaned = cleaned.substring(slash + 1);
@@ -138,7 +138,7 @@ public class AssetService {
     }
 
     private String normalizePath(String path) {
-        return path.replace('\\', '/').replaceAll("^/+", "");
+        return FileService.normalizePathSeparators(path);
     }
 
     public record UploadResult(String path, String markdownRef) {}
