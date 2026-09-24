@@ -164,7 +164,7 @@ indexService.indexNote(vaultRoot, relativePath, nextContent);
 
 ---
 
-### - [ ] BUG-P1-004: 文件树刷新 - 全量重建索引性能差
+### - [x] BUG-P1-004: 文件树刷新 - 全量重建索引性能差
 **问题概述**: 用户点击刷新文件树时，后端会全量遍历并重建索引，大型 vault（10k+ 文件）会阻塞数秒。
 
 **涉及文件**:
@@ -185,7 +185,7 @@ indexService.indexNote(vaultRoot, relativePath, nextContent);
 
 ---
 
-### - [ ] BUG-P1-005: 编码检测错误 - GBK/Big5 误判为 UTF-8
+### - [x] BUG-P1-005: 编码检测错误 - GBK/Big5 误判为 UTF-8
 **问题概述**: `FileService` 的编码检测顺序不当，UTF-8 解码器过于宽容，可能错误解码非 UTF-8 文件导致乱码。
 
 **涉及文件**:

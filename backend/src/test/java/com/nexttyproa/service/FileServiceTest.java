@@ -66,6 +66,60 @@ class FileServiceTest {
     }
 
     @Test
+    void detectsShortGbkThatIsAlsoValidUtf8(@TempDir Path vaultRoot) throws Exception {
+        Path file = vaultRoot.resolve("short-gbk.md");
+        byte[] bytes = "学习".getBytes(Charset.forName("GBK"));
+        assertEquals("ѧϰ", new String(bytes, StandardCharsets.UTF_8));
+        Files.write(file, bytes);
+
+        FileService.ReadFileResult read = fileService.readFileWithEncoding(file);
+
+        assertEquals("GBK", read.encoding());
+        assertEquals("学习", read.content());
+    }
+
+    @Test
+    void readsAndPreservesBig5Markdown(@TempDir Path vaultRoot) throws Exception {
+        Path file = vaultRoot.resolve("big5.md");
+        String content = "# 筆記\n這是一個繁體中文的測試文件，內容包含標點符號。";
+        Files.write(file, content.getBytes(Charset.forName("Big5")));
+
+        FileService.ReadFileResult read = fileService.readFileWithEncoding(file);
+
+        assertEquals("Big5", read.encoding());
+        assertEquals(content, read.content());
+
+        fileService.writeFileAtomic(file, read.content() + "\n測試", read.encoding(), read.hasBom(), false);
+        assertEquals(content + "\n測試", new String(Files.readAllBytes(file), Charset.forName("Big5")));
+    }
+
+    @Test
+    void detectsShiftJisMarkdown(@TempDir Path vaultRoot) throws Exception {
+        Path file = vaultRoot.resolve("sjis.md");
+        String content = "# メモ\n日本語のテストファイルです。";
+        Files.write(file, content.getBytes(Charset.forName("Shift_JIS")));
+
+        FileService.ReadFileResult read = fileService.readFileWithEncoding(file);
+
+        assertEquals("Shift_JIS", read.encoding());
+        assertEquals(content, read.content());
+    }
+
+    @Test
+    void keepsUtf8ForNonAsciiText(@TempDir Path vaultRoot) throws Exception {
+        String[] samples = {"café", "Größe über Maß", "Привет мир", "Καλημέρα", "nǐ hǎo", "# 学习笔记\n中文内容", "done 👍"};
+        for (int i = 0; i < samples.length; i++) {
+            Path file = vaultRoot.resolve("utf8-" + i + ".md");
+            Files.write(file, samples[i].getBytes(StandardCharsets.UTF_8));
+
+            FileService.ReadFileResult read = fileService.readFileWithEncoding(file);
+
+            assertEquals("UTF-8", read.encoding(), samples[i]);
+            assertEquals(samples[i], read.content());
+        }
+    }
+
+    @Test
     void readsAndWritesUtf8Bom(@TempDir Path vaultRoot) throws Exception {
         Path file = vaultRoot.resolve("bom.md");
         byte[] content = "Hello".getBytes(StandardCharsets.UTF_8);

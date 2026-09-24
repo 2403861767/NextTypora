@@ -27,6 +27,7 @@ public class FileService {
     private static final byte[] UTF8_BOM = new byte[] {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
     private static final String DEFAULT_ENCODING = "UTF-8";
     private static final int BINARY_SCAN_LIMIT = 8192;
+    private static final String[] LEGACY_ENCODINGS = {"GBK", "Big5", "Shift_JIS"};
 
     /**
      * Normalize path separators to forward slashes for cross-platform consistency.
@@ -80,19 +81,36 @@ public class FileService {
             return new ReadFileResult(decodeStrict(body, StandardCharsets.UTF_8), DEFAULT_ENCODING, true);
         }
 
+        // A strict decode only proves the bytes are legal in that charset: short GBK text is often
+        // valid UTF-8, and GBK accepts nearly all Big5/Shift_JIS byte pairs. So every candidate that
+        // decodes is scored, and a legacy charset replaces UTF-8 only with a strictly higher score.
+        String bestEncoding = null;
+        String bestContent = null;
+        double bestScore = -1;
         String utf8Content = tryDecode(body, StandardCharsets.UTF_8);
         if (utf8Content != null) {
-            return new ReadFileResult(utf8Content, DEFAULT_ENCODING, false);
+            bestEncoding = DEFAULT_ENCODING;
+            bestContent = utf8Content;
+            bestScore = utf8Score(utf8Content);
         }
 
-        for (String candidate : new String[] {"GBK", "Big5", "Shift_JIS"}) {
+        for (String candidate : LEGACY_ENCODINGS) {
             String decoded = tryDecode(body, Charset.forName(candidate));
-            if (decoded != null) {
-                return new ReadFileResult(decoded, candidate, false);
+            if (decoded == null) {
+                continue;
+            }
+            double score = legacyScore(body, candidate);
+            if (score > bestScore) {
+                bestEncoding = candidate;
+                bestContent = decoded;
+                bestScore = score;
             }
         }
 
-        throw new IOException("Unsupported or corrupt text encoding: " + file);
+        if (bestEncoding == null) {
+            throw new IOException("Unsupported or corrupt text encoding: " + file);
+        }
+        return new ReadFileResult(bestContent, bestEncoding, false);
     }
 
     public void writeFile(Path file, String content) throws IOException {
@@ -252,6 +270,74 @@ public class FileService {
             }
         }
         return false;
+    }
+
+    /**
+     * Share of non-ASCII code points that are plausible in real text. Misread GBK bytes land in
+     * U+0080-U+07FF blocks such as IPA, combining marks or archaic Cyrillic, which score as implausible.
+     */
+    private static double utf8Score(String content) {
+        int total = 0;
+        int plausible = 0;
+        for (int cp : content.codePoints().toArray()) {
+            if (cp < 0x80) {
+                continue;
+            }
+            total++;
+            if (isPlausibleUtf8CodePoint(cp)) {
+                plausible++;
+            }
+        }
+        return total == 0 ? 1.0 : (double) plausible / total;
+    }
+
+    private static boolean isPlausibleUtf8CodePoint(int cp) {
+        if (cp >= 0x0800) {
+            return !(cp >= 0xE000 && cp <= 0xF8FF) && cp != 0xFFFD;
+        }
+        return (cp >= 0x00A0 && cp <= 0x024F)      // Latin-1 printable, Latin Extended-A/B
+                || (cp >= 0x0386 && cp <= 0x03CE)  // Greek
+                || (cp >= 0x0400 && cp <= 0x045F)  // Cyrillic
+                || (cp >= 0x05D0 && cp <= 0x05EA)  // Hebrew letters
+                || (cp >= 0x0600 && cp <= 0x06FF); // Arabic
+    }
+
+    /**
+     * Share of non-ASCII characters that fall in the core range of the given double-byte charset
+     * (GB2312 level-1, Big5 common characters, JIS level-1), where real text overwhelmingly lives.
+     */
+    private static double legacyScore(byte[] bytes, String encoding) {
+        int total = 0;
+        int common = 0;
+        int i = 0;
+        while (i < bytes.length) {
+            int lead = bytes[i] & 0xFF;
+            if (lead < 0x80) {
+                i++;
+                continue;
+            }
+            total++;
+            if ("Shift_JIS".equals(encoding) && lead >= 0xA1 && lead <= 0xDF) {
+                i++; // single-byte half-width katakana
+                continue;
+            }
+            int trail = i + 1 < bytes.length ? bytes[i + 1] & 0xFF : 0;
+            if (isCommonLegacyPair(encoding, lead, trail)) {
+                common++;
+            }
+            i += 2;
+        }
+        return total == 0 ? 0 : (double) common / total;
+    }
+
+    private static boolean isCommonLegacyPair(String encoding, int lead, int trail) {
+        return switch (encoding) {
+            case "GBK" -> ((lead >= 0xA1 && lead <= 0xA3) || (lead >= 0xB0 && lead <= 0xD7))
+                    && trail >= 0xA1 && trail <= 0xFE;
+            case "Big5" -> lead >= 0xA1 && lead <= 0xC6;
+            case "Shift_JIS" -> (lead >= 0x81 && lead <= 0x83) || (lead >= 0x88 && lead <= 0x98);
+            default -> false;
+        };
     }
 
     private static String tryDecode(byte[] bytes, Charset charset) {

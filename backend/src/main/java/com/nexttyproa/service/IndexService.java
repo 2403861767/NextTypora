@@ -10,15 +10,18 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -39,6 +42,7 @@ public class IndexService {
     private volatile int failedFiles;
     private volatile int skippedFiles;
     private volatile Instant lastIndexedAt;
+    private volatile Path indexedRoot;
 
     public IndexService(FileService fileService) {
         this.fileService = fileService;
@@ -47,13 +51,14 @@ public class IndexService {
     public void indexNote(Path vaultRoot, String relativePath, String content) {
         try {
             Path file = fileService.resolveSafe(vaultRoot, relativePath);
-            if (Files.exists(file) && Files.size(file) > MAX_INDEX_BYTES) {
+            long size = Files.exists(file) ? Files.size(file) : -1L;
+            if (size > MAX_INDEX_BYTES) {
                 notes.remove(FileService.normalizePathSeparators(relativePath));
                 skippedFiles++;
                 lastIndexedAt = Instant.now();
                 return;
             }
-            Instant updatedAt = Files.exists(file)
+            Instant updatedAt = size >= 0
                     ? Files.getLastModifiedTime(file).toInstant()
                     : Instant.now();
             ParsedMarkdown parsed = parseMarkdown(relativePath, content);
@@ -64,7 +69,8 @@ public class IndexService {
                     parsed.frontmatter(),
                     parsed.tags(),
                     fileService.hashContent(content),
-                    updatedAt
+                    updatedAt,
+                    size
             ));
             totalFiles = Math.max(totalFiles, notes.size());
             lastIndexedAt = Instant.now();
@@ -90,14 +96,26 @@ public class IndexService {
         }
     }
 
-    public void reindexVault(Path vaultRoot) throws IOException {
+    /**
+     * Incrementally syncs the index with the vault: only files whose size or mtime changed are
+     * re-read, entries for files no longer on disk are dropped, and existing entries stay
+     * searchable throughout. Switching to a different vault root triggers a full rebuild.
+     */
+    public synchronized void reindexVault(Path vaultRoot) throws IOException {
         indexing = true;
-        notes.clear();
+        if (!Objects.equals(vaultRoot, indexedRoot)) {
+            notes.clear();
+        }
+        indexedRoot = vaultRoot;
+        // Entries added concurrently (e.g. by a save) during the walk are not in this snapshot,
+        // so they are never treated as stale.
+        Set<String> stale = new HashSet<>(notes.keySet());
         AtomicInteger discoveredFiles = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         AtomicInteger skipped = new AtomicInteger();
         try {
             if (vaultRoot == null || !Files.exists(vaultRoot)) {
+                notes.clear();
                 totalFiles = 0;
                 failedFiles = 0;
                 skippedFiles = 0;
@@ -110,19 +128,30 @@ public class IndexService {
                         .filter(path -> shouldIndex(vaultRoot, path))
                         .forEach(path -> {
                             discoveredFiles.incrementAndGet();
+                            String relative = fileService.relativePathString(vaultRoot, path);
+                            stale.remove(relative);
                             try {
-                                if (Files.size(path) > MAX_INDEX_BYTES) {
+                                BasicFileAttributes attrs = Files.readAttributes(path, BasicFileAttributes.class);
+                                if (attrs.size() > MAX_INDEX_BYTES) {
+                                    notes.remove(relative);
                                     skipped.incrementAndGet();
                                     return;
                                 }
-                                String relative = fileService.relativePathString(vaultRoot, path);
+                                IndexedNote existing = notes.get(relative);
+                                if (existing != null
+                                        && existing.size() == attrs.size()
+                                        && existing.updatedAt().equals(attrs.lastModifiedTime().toInstant())) {
+                                    return;
+                                }
                                 indexNote(vaultRoot, relative, fileService.readFile(path));
                             } catch (IOException e) {
+                                notes.remove(relative);
                                 failed.incrementAndGet();
                                 log.warn("Failed to index {}: {}", path, e.getMessage());
                             }
                         });
             }
+            stale.forEach(notes::remove);
             totalFiles = discoveredFiles.get();
             failedFiles = failed.get();
             skippedFiles = skipped.get();
@@ -445,7 +474,8 @@ public class IndexService {
             Map<String, String> frontmatter,
             Set<String> tags,
             String hash,
-            Instant updatedAt
+            Instant updatedAt,
+            long size
     ) {
         private IndexedNote {
             frontmatter = Map.copyOf(frontmatter);
