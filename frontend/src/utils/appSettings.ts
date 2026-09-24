@@ -3,6 +3,7 @@ import type {
   EditorTab,
   ImageUploadSettings,
   OpenedFileRef,
+  PersistedEditorTab,
   PreferenceSettings,
   RecentFileRef,
   RecentWorkspaceRef,
@@ -125,17 +126,34 @@ function recentWorkspacesFromAppSettings(raw: AppSettings | Record<string, unkno
 function openTabsFromAppSettings(raw: AppSettings | Record<string, unknown>): EditorTab[] {
   if (!Array.isArray(raw.openTabs)) return [];
   return raw.openTabs
-    .filter((item): item is EditorTab => {
+    .filter((item): item is PersistedEditorTab => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
       const candidate = item as Record<string, unknown>;
       return typeof candidate.id === 'string'
         && typeof candidate.path === 'string'
-        && typeof candidate.title === 'string'
-        && typeof candidate.content === 'string'
-        && typeof candidate.loadedContent === 'string'
-        && typeof candidate.contentHash === 'string';
+        && typeof candidate.title === 'string';
     })
-    .slice(0, 12);
+    .slice(0, 12)
+    // 正文不从 settings 恢复（旧版本存过的也丢弃），切换到标签页时会从磁盘重新读取
+    .map((tab) => ({
+      id: tab.id,
+      path: tab.path,
+      title: tab.title,
+      content: '',
+      loadedContent: '',
+      contentHash: '',
+      saveStatus: 'idle' as const,
+      ...(tab.missing === true ? { missing: true } : {}),
+    }));
+}
+
+function toPersistedEditorTab(tab: PersistedEditorTab): PersistedEditorTab {
+  return {
+    id: tab.id,
+    path: tab.path,
+    title: tab.title,
+    ...(tab.missing === true ? { missing: true } : {}),
+  };
 }
 
 function writingModesFromAppSettings(raw: AppSettings | Record<string, unknown>): WritingModeSettings {
@@ -176,7 +194,9 @@ export async function loadAppSettings(): Promise<AppSettings | Record<string, un
   return readLocalAppSettings();
 }
 
-export async function patchStoredAppSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+export async function patchStoredAppSettings(input: Partial<AppSettings>): Promise<AppSettings> {
+  // 调用方传入的是完整 EditorTab（含正文），这里统一裁剪为引用，避免每次按键都把所有标签页正文写进 settings.json
+  const patch = input.openTabs ? { ...input, openTabs: input.openTabs.map(toPersistedEditorTab) } : input;
   if (window.nextTyproa?.patchAppSettings) {
     return window.nextTyproa.patchAppSettings(patch);
   }

@@ -15,6 +15,7 @@ let quitting = false;
 let flushSavePending = false;
 let flushSaveTimeout = null;
 const FLUSH_SAVE_WATCHDOG_MS = 15000;
+const WINDOW_READY_TIMEOUT_MS = 30000;
 
 const gotLock = app.requestSingleInstanceLock();
 if (process.platform === 'win32') {
@@ -223,6 +224,14 @@ function closeSplashWindow() {
   splashWindow = null;
 }
 
+// 启动失败统一出口：关闭 splash、提示错误并直接退出（置 quitting，避免 before-quit 等待未加载的渲染进程保存）
+function failStartup(message) {
+  if (quitting) return;
+  closeSplashWindow();
+  dialog.showErrorBox('NextTyproa 启动失败', message);
+  finishQuit();
+}
+
 function startBackend() {
   return new Promise((resolve, reject) => {
     const token = `token-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -297,6 +306,13 @@ function startBackend() {
     backendProcess.stderr.on('data', (data) => {
       data.toString().split(/\r?\n/).forEach((line) => line && handleLine(line));
     });
+    // 无法启动进程（如找不到 java）时只会触发 error 而不会触发 exit，不监听会抛未捕获异常并卡到 60 秒超时
+    backendProcess.on('error', (err) => {
+      if (!resolved) {
+        clearTimeout(timeout);
+        reject(new Error(`无法启动后端进程（${javaBin}）：${err.message}`));
+      }
+    });
     backendProcess.on('exit', (code) => {
       if (!resolved) {
         clearTimeout(timeout);
@@ -314,7 +330,7 @@ function startBackend() {
 async function waitForHealth(port, maxAttempts = 60) {
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+      const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) return true;
     } catch {
       // retry
@@ -504,13 +520,20 @@ function createWindow() {
     },
   });
 
+  // 渲染进程崩溃或卡住时 ready-to-show 永远不会触发，splash 会一直停留
+  const readyTimer = setTimeout(() => {
+    failStartup(`界面加载超时（${WINDOW_READY_TIMEOUT_MS / 1000}秒），请重试。`);
+  }, WINDOW_READY_TIMEOUT_MS);
+
   mainWindow.once('ready-to-show', () => {
+    clearTimeout(readyTimer);
     closeSplashWindow();
     mainWindow.show();
     mainWindow.focus();
   });
 
   mainWindow.on('closed', () => {
+    clearTimeout(readyTimer);
     mainWindow = null;
   });
 
@@ -532,9 +555,7 @@ function createWindow() {
     mainWindow.loadFile(indexPath)
       .then(onPageReady)
       .catch((err) => {
-        closeSplashWindow();
-        dialog.showErrorBox('NextTyproa 启动失败', `无法加载界面文件:\n${indexPath}\n\n${err.message}`);
-        app.quit();
+        failStartup(`无法加载界面文件:\n${indexPath}\n\n${err.message}`);
       });
   }
 }
@@ -819,9 +840,7 @@ if (gotLock) {
       }
       createWindow();
     } catch (err) {
-      closeSplashWindow();
-      dialog.showErrorBox('NextTyproa 启动失败', err.message || String(err));
-      app.quit();
+      failStartup(err.message || String(err));
     }
   });
 }

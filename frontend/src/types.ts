@@ -120,6 +120,9 @@ export interface EditorTab {
   updatedAt?: string;
 }
 
+// 持久化到 settings 的标签页只保留引用，正文每次都从磁盘重新读取
+export type PersistedEditorTab = Pick<EditorTab, 'id' | 'path' | 'title' | 'missing'>;
+
 export interface ImageUploadSettings {
   mode: ImageUploadMode;
   picgoServerUrl: string;
@@ -159,7 +162,7 @@ export interface AppSettings {
   shortcuts?: Record<string, string[]>;
   recentFiles?: RecentFileRef[];
   recentWorkspaces?: RecentWorkspaceRef[];
-  openTabs?: EditorTab[];
+  openTabs?: PersistedEditorTab[];
   activeTabPath?: string;
   writingModes?: Partial<WritingModeSettings>;
 }

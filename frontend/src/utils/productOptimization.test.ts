@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { preferenceSettingsFromAppSettings } from './appSettings';
+import { patchStoredAppSettings, preferenceSettingsFromAppSettings } from './appSettings';
 import { upsertEditorTab, upsertRecentFile, upsertRecentWorkspace } from './recentFiles';
 import { detectShortcutConflicts, findShortcutAction, normalizeShortcut, resolveShortcutBindings, shortcutFromKeyboardEvent } from './shortcuts';
 import { scopeCustomEditorCss } from './themes';
-import type { Note } from '../types';
+import type { EditorTab, Note } from '../types';
 import { snippetToPieces } from '../components/SearchResultsPanel';
 
 describe('product optimization utilities', () => {
@@ -140,6 +140,39 @@ describe('product optimization utilities', () => {
 
     expect(tabs).toHaveLength(1);
     expect(tabs[0].contentHash).toBe('hash-2');
+  });
+
+  it('restores open tabs as refs and drops legacy persisted content', () => {
+    const settings = preferenceSettingsFromAppSettings({
+      openTabs: [
+        { id: 'a.md', path: 'a.md', title: 'A' },
+        { id: 'b.md', path: 'b.md', title: 'B', content: 'dirty', loadedContent: 'old', contentHash: 'h', missing: true },
+        { id: 'broken.md', path: 'broken.md' },
+      ],
+    });
+
+    expect(settings.openTabs).toEqual([
+      { id: 'a.md', path: 'a.md', title: 'A', content: '', loadedContent: '', contentHash: '', saveStatus: 'idle' },
+      { id: 'b.md', path: 'b.md', title: 'B', content: '', loadedContent: '', contentHash: '', saveStatus: 'idle', missing: true },
+    ]);
+  });
+
+  it('persists open tabs without document content', async () => {
+    localStorage.clear();
+    const tab: EditorTab = {
+      id: 'a.md',
+      path: 'a.md',
+      title: 'A',
+      content: 'x'.repeat(1000),
+      loadedContent: 'x'.repeat(1000),
+      contentHash: 'hash',
+      saveStatus: 'saved',
+    };
+    const saved = await patchStoredAppSettings({ openTabs: [tab] });
+
+    expect(saved.openTabs).toEqual([{ id: 'a.md', path: 'a.md', title: 'A' }]);
+    expect(localStorage.getItem('nexttyproa-app-settings')).not.toContain('xxxx');
+    localStorage.clear();
   });
 
   it('renders backend marked snippets without showing markup text', () => {

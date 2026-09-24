@@ -394,7 +394,7 @@ Files.copy(file, backupDir.resolve(fileName + "." + timestamp + ".bak"), ...);
 
 ---
 
-### - [ ] BUG-P2-005: 前端状态冗余 - openTabs 与 recentFiles 重复
+### - [x] BUG-P2-005: 前端状态冗余 - openTabs 与 recentFiles 重复
 **问题概述**: `openTabs` 和 `recentFiles` 存储重复数据（path、title），增加内存占用和同步复杂度。
 
 **涉及文件**:
@@ -419,7 +419,7 @@ const [recentFiles, setRecentFiles] = useState<RecentFileRef[]>([]);
 
 ---
 
-### - [ ] BUG-P2-006: Electron splash 窗口 - 未处理加载失败
+### - [x] BUG-P2-006: Electron splash 窗口 - 未处理加载失败
 **问题概述**: 如果后端启动失败，splash 窗口会一直显示，没有超时或错误提示。
 
 **涉及文件**:

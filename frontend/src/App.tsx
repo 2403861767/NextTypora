@@ -501,27 +501,31 @@ export default function App() {
     });
   }, []);
 
+  // 用函数式更新基于最新状态合并：调用方在 await flushSave/getNote 之后才调用，闭包里的列表可能已过期
   const rememberOpenedNote = useCallback((folder: string, note: Note) => {
-    const recent = upsertRecentFile(recentFiles, {
-      folder,
-      relativePath: note.path,
-      title: note.title || noteDisplayName(note.path),
+    setRecentFiles((prev) => {
+      const next = upsertRecentFile(prev, {
+        folder,
+        relativePath: note.path,
+        title: note.title || noteDisplayName(note.path),
+      });
+      void patchStoredAppSettings({ recentFiles: next }).catch(() => undefined);
+      return next;
     });
-    const tabs = upsertEditorTab(openTabs, makeEditorTab(note));
-
-    setRecentFiles(recent);
-    setOpenTabs(tabs);
+    setOpenTabs((prev) => {
+      const next = upsertEditorTab(prev, makeEditorTab(note));
+      void patchStoredAppSettings({ openTabs: next }).catch(() => undefined);
+      return next;
+    });
     setActiveTabPath(note.path);
     void patchStoredAppSettings({
-      recentFiles: recent,
-      openTabs: tabs,
       activeTabPath: note.path,
       lastOpenedFile: {
         folder,
         relativePath: note.path,
       },
     }).catch(() => undefined);
-  }, [openTabs, recentFiles]);
+  }, []);
 
   const persistWritingModes = useCallback((next: WritingModeSettings) => {
     setWritingModes(next);
@@ -2412,10 +2416,7 @@ export default function App() {
             setEditorThemeId(saved.editorThemeId);
             setCustomCss(saved.customCss);
             setShortcutOverrides(saved.shortcuts);
-            setRecentFiles(saved.recentFiles);
             setRecentWorkspaces(saved.recentWorkspaces);
-            setOpenTabs(saved.openTabs);
-            setActiveTabPath(saved.activeTabPath);
             persistWritingModes(saved.writingModes);
           }}
         />
