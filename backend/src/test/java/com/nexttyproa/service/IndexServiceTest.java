@@ -84,6 +84,28 @@ class IndexServiceTest {
     }
 
     @Test
+    void removeNotesUnderDropsOnlyEntriesInsideDirectory(@TempDir Path vaultRoot) throws Exception {
+        IndexService indexService = new IndexService(new FileService());
+        Files.createDirectories(vaultRoot.resolve("docs/nested"));
+        Files.createDirectories(vaultRoot.resolve("docs-other"));
+        Files.writeString(vaultRoot.resolve("docs/a.md"), "# A\nshared");
+        Files.writeString(vaultRoot.resolve("docs/nested/中文.md"), "# 中文\nshared");
+        Files.writeString(vaultRoot.resolve("docs-other/b.md"), "# B\nshared");
+        Files.writeString(vaultRoot.resolve("root.md"), "# Root\nshared");
+        indexService.reindexVault(vaultRoot);
+        assertEquals(4, indexService.search("shared").size());
+
+        indexService.removeNotesUnder("docs");
+
+        List<String> paths = indexService.search("shared").stream()
+                .map(SearchResultDto::getPath)
+                .sorted()
+                .toList();
+        assertEquals(List.of("docs-other/b.md", "root.md"), paths);
+        assertEquals(2, indexService.status().getIndexedFiles());
+    }
+
+    @Test
     void reindexClearsEntriesWhenVaultChanges(@TempDir Path tempDir) throws Exception {
         IndexService indexService = new IndexService(new FileService());
         Path vaultA = Files.createDirectories(tempDir.resolve("vaultA"));

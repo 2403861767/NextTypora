@@ -86,6 +86,17 @@ public class IndexService {
         lastIndexedAt = Instant.now();
     }
 
+    /**
+     * Drops every indexed note under the given directory without walking the vault.
+     * Synchronized with reindexVault so an in-flight walk cannot re-add entries after they are removed.
+     */
+    public synchronized void removeNotesUnder(String relativeDirectory) {
+        String prefix = FileService.normalizePathSeparators(relativeDirectory) + "/";
+        notes.keySet().removeIf(path -> path.startsWith(prefix));
+        totalFiles = notes.size();
+        lastIndexedAt = Instant.now();
+    }
+
     public void syncRenamedFile(Path vaultRoot, String oldRelativePath, String newRelativePath) throws IOException {
         if (fileService.isMarkdownPath(oldRelativePath)) {
             removeNote(oldRelativePath);

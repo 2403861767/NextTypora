@@ -53,7 +53,7 @@ public class FileSystemService {
         boolean directory = Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS);
         if (directory) {
             deleteDirectory(target);
-            indexService.reindexVault(vaultRoot);
+            indexService.removeNotesUnder(fileService.relativePathString(vaultRoot, target));
         } else {
             Files.delete(target);
             if (fileService.isMarkdownPath(normalized)) {
