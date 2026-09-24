@@ -51,15 +51,30 @@ public class NoteService {
                     ? fileService.readFileWithEncoding(file)
                     : new FileService.ReadFileResult("", "UTF-8", false);
 
-            if (fileService.exists(file) && !request.isForce() && request.getBaseHash() != null && !request.getBaseHash().isBlank()) {
-                String currentHash = fileService.hashContent(currentRead.content());
-                if (!currentHash.equals(request.getBaseHash())) {
+            // 对已存在的文件执行冲突检测（除非明确设置 force=true）
+            if (fileService.exists(file)) {
+                if (request.isForce()) {
+                    // force=true 明确跳过冲突检测，允许强制覆盖
+                } else if (request.getBaseHash() == null || request.getBaseHash().isBlank()) {
+                    // 缺少 baseHash 视为潜在冲突，要求前端提供 baseHash 或使用 force=true
+                    String currentHash = fileService.hashContent(currentRead.content());
                     throw new NoteConflictException(
-                            "Note was modified outside NextTyproa",
+                            "Cannot save without baseHash (file may have been modified externally)",
                             relativePath,
                             currentHash,
                             Files.getLastModifiedTime(file).toInstant()
                     );
+                } else {
+                    // 正常的 baseHash 冲突检测
+                    String currentHash = fileService.hashContent(currentRead.content());
+                    if (!currentHash.equals(request.getBaseHash())) {
+                        throw new NoteConflictException(
+                                "Note was modified outside NextTyproa",
+                                relativePath,
+                                currentHash,
+                                Files.getLastModifiedTime(file).toInstant()
+                        );
+                    }
                 }
             }
 

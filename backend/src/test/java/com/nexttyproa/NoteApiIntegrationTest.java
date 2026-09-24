@@ -320,15 +320,21 @@ class NoteApiIntegrationTest {
                 .andExpect(jsonPath("$.path").value("hello.md"))
                 .andExpect(jsonPath("$.title").value("Hello World"));
 
-        mockMvc.perform(get("/api/note")
+        String getBody = mockMvc.perform(get("/api/note")
                         .header("X-Auth-Token", TOKEN)
                         .param("path", "hello.md"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content", containsString("springboot")));
+                .andExpect(jsonPath("$.content", containsString("springboot")))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        String baseHash = objectMapper.readTree(getBody).get("contentHash").asText();
 
         SaveNoteRequest saveRequest = new SaveNoteRequest();
         saveRequest.setPath("hello.md");
         saveRequest.setContent("# Hello World\n\nUpdated content with springboot keyword.");
+        saveRequest.setBaseHash(baseHash);
 
         mockMvc.perform(put("/api/note")
                         .header("X-Auth-Token", TOKEN)

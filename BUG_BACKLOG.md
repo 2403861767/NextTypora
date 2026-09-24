@@ -101,7 +101,7 @@ private Object lockFor(String relativePath) {
 
 ## P1 - 业务逻辑错误
 
-### - [ ] BUG-P1-001: 冲突检测不一致 - 新文件首次保存无 baseHash
+### - [x] BUG-P1-001: 冲突检测不一致 - 新文件首次保存无 baseHash
 **问题概述**: 创建新文件后首次保存时，前端不会发送 `baseHash`，导致后端跳过冲突检测，可能覆盖外部修改。
 
 **涉及文件**:
