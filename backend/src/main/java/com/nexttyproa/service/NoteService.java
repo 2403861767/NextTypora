@@ -4,6 +4,8 @@ import com.google.common.util.concurrent.Striped;
 import com.nexttyproa.dto.CreateNoteRequest;
 import com.nexttyproa.dto.NoteDto;
 import com.nexttyproa.dto.SaveNoteRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -14,6 +16,8 @@ import java.util.concurrent.locks.Lock;
 
 @Service
 public class NoteService {
+
+    private static final Logger log = LoggerFactory.getLogger(NoteService.class);
 
     private final WorkspaceService workspaceService;
     private final FileService fileService;
@@ -83,7 +87,13 @@ public class NoteService {
                     : request.getEncoding();
             boolean hasBom = request.getHasBom() == null ? currentRead.hasBom() : request.getHasBom();
             fileService.writeFileAtomic(file, nextContent, encoding, hasBom, fileService.exists(file));
-            indexService.indexNote(vaultRoot, relativePath, nextContent);
+
+            // 更新搜索索引（失败不影响保存操作，但记录错误日志）
+            try {
+                indexService.indexNote(vaultRoot, relativePath, nextContent);
+            } catch (Exception e) {
+                log.error("Failed to update search index after saving file: {} - Index may be inconsistent", relativePath, e);
+            }
 
             return toDto(vaultRoot, file, new FileService.ReadFileResult(nextContent, fileService.normalizeEncodingName(encoding), hasBom));
         } finally {
@@ -106,7 +116,13 @@ public class NoteService {
             throw new ConflictException("Note already exists: " + relativePath);
         }
         fileService.writeFileAtomic(file, content);
-        indexService.indexNote(vaultRoot, relativePath, content);
+
+        // 更新搜索索引（失败不影响创建操作，但记录错误日志）
+        try {
+            indexService.indexNote(vaultRoot, relativePath, content);
+        } catch (Exception e) {
+            log.error("Failed to update search index after creating file: {} - Index may be inconsistent", relativePath, e);
+        }
 
         return toDto(vaultRoot, file, new FileService.ReadFileResult(content, "UTF-8", false));
     }
