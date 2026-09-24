@@ -235,7 +235,7 @@ indexService.reindexVault(vaultRoot);
 
 ---
 
-### - [ ] BUG-P1-007: WorkspaceController 缺失 /tree/refresh 端点
+### - [x] BUG-P1-007: WorkspaceController 缺失 /tree/refresh 端点
 **问题概述**: 前端调用 `refreshWorkspace()` 访问 `/api/tree/refresh`，但 `WorkspaceController` 中未定义此端点，应该在 `FileSystemController` 中。
 
 **涉及文件**:
@@ -253,6 +253,8 @@ indexService.reindexVault(vaultRoot);
 2. 打开浏览器 DevTools Network 面板
 3. 点击文件树刷新按钮
 4. 检查请求是否返回 404
+
+**结论**: 非 Bug，无需修改代码。`POST /api/tree/refresh` 已在 [FileSystemController.java:51-54](backend/src/main/java/com/nexttyproa/controller/FileSystemController.java#L51-L54) 中定义（与 `WorkspaceController` 的 `GET /api/tree` 不冲突），并由集成测试 `NoteApiIntegrationTest.refreshTreeReindexesVaultAndReturnsCurrentTree` 覆盖且通过。
 
 ---
 
