@@ -117,13 +117,26 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+const HEALTH_CHECK_TIMEOUT_MS = 3000;
+
 export async function healthCheck(): Promise<boolean> {
   try {
-    const res = await fetch(`${baseUrl()}/api/health`);
+    // 超时视为不可用，避免后端卡死时心跳一直挂起
+    const res = await fetch(`${baseUrl()}/api/health`, { signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS) });
     return res.ok;
   } catch {
     return false;
   }
+}
+
+/** 断线后重连：后端可能已被 Electron 重启（端口和令牌都会变），先重新读取配置再做健康检查。 */
+export async function reconnectBackend(): Promise<boolean> {
+  try {
+    await initApiConfig();
+  } catch {
+    return false;
+  }
+  return healthCheck();
 }
 
 export function getWorkspace(): Promise<{ path: string }> {

@@ -4,6 +4,15 @@ const { spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const { loadSettings, patchSettings } = require('./settings');
+const {
+  normalizePicGoServerUrl,
+  sanitizeSettingsPatch,
+  sanitizeWorkspacePath,
+  sanitizeOpenedFile,
+  sanitizeSaveDialogOptions,
+  sanitizePicGoConfig,
+  sanitizePicGoUpload,
+} = require('./ipcValidation');
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
@@ -347,11 +356,6 @@ async function waitForHealth(port, maxAttempts = 60) {
   return false;
 }
 
-function normalizePicGoServerUrl(url) {
-  const trimmed = String(url || 'http://127.0.0.1:36677').trim().replace(/\/+$/, '');
-  return trimmed || 'http://127.0.0.1:36677';
-}
-
 function picGoAuthHeaders(secret) {
   const headers = {};
   if (secret && String(secret).trim()) {
@@ -569,11 +573,41 @@ function createWindow() {
 
 ipcMain.handle('backend:getConfig', () => backendConfig);
 
+// 渲染进程检测到后端断线后可请求重启：新进程使用新的端口和令牌，渲染进程随后通过 backend:getConfig 重新读取
+let backendRestart = null;
+
+async function restartBackend() {
+  if (isDev) {
+    return { ok: false, reason: 'dev' };
+  }
+  if (quitting) {
+    return { ok: false, reason: 'quitting' };
+  }
+  const previous = backendProcess;
+  if (previous && previous.exitCode === null && !previous.killed) {
+    previous.kill();
+  }
+  await startBackend();
+  if (!(await waitForHealth(backendConfig.port))) {
+    throw new Error('后端健康检查失败，请稍后重试。');
+  }
+  return { ok: true };
+}
+
+ipcMain.handle('backend:restart', () => {
+  if (!backendRestart) {
+    backendRestart = restartBackend().finally(() => {
+      backendRestart = null;
+    });
+  }
+  return backendRestart;
+});
+
 ipcMain.handle('settings:get', () => loadSettings(app.getPath('userData')));
 
 ipcMain.handle('settings:setLastWorkspace', (_event, folderPath) => {
   if (!folderPath) return loadSettings(app.getPath('userData'));
-  return patchSettings(app.getPath('userData'), { lastWorkspace: folderPath });
+  return patchSettings(app.getPath('userData'), { lastWorkspace: sanitizeWorkspacePath(folderPath) });
 });
 
 ipcMain.handle('window:minimize', () => {
@@ -598,20 +632,15 @@ ipcMain.handle('settings:rememberOpenedFile', (_event, payload) => {
   if (!payload?.folder || !payload?.relativePath) {
     return loadSettings(app.getPath('userData'));
   }
+  const openedFile = sanitizeOpenedFile(payload);
   return patchSettings(app.getPath('userData'), {
-    lastWorkspace: payload.folder,
-    lastOpenedFile: {
-      folder: payload.folder,
-      relativePath: payload.relativePath,
-    },
+    lastWorkspace: openedFile.folder,
+    lastOpenedFile: openedFile,
   });
 });
 
 ipcMain.handle('settings:patch', (_event, patch) => {
-  if (!patch || typeof patch !== 'object') {
-    return loadSettings(app.getPath('userData'));
-  }
-  return patchSettings(app.getPath('userData'), patch);
+  return patchSettings(app.getPath('userData'), sanitizeSettingsPatch(patch));
 });
 
 ipcMain.handle('themes:list', () => listImportedThemes());
@@ -639,14 +668,16 @@ ipcMain.handle('themes:importCss', async () => {
   return themeRecordFromFile(targetPath);
 });
 
-ipcMain.handle('picgo:heartbeat', async (_event, { serverUrl, secret }) => {
+ipcMain.handle('picgo:heartbeat', async (_event, config) => {
+  const { serverUrl, secret } = sanitizePicGoConfig(config);
   return picGoRequest(serverUrl, secret, '/heartbeat', { method: 'POST' });
 });
 
-ipcMain.handle('picgo:upload', async (_event, { serverUrl, secret, buffer, filename, mimeType }) => {
+ipcMain.handle('picgo:upload', async (_event, payload) => {
+  const { serverUrl, secret, buffer, filename, mimeType } = sanitizePicGoUpload(payload);
   const form = new FormData();
-  const blob = new Blob([buffer], { type: mimeType || 'application/octet-stream' });
-  form.append('files', blob, filename || 'image.png');
+  const blob = new Blob([buffer], { type: mimeType });
+  form.append('files', blob, filename);
   return picGoRequest(serverUrl, secret, '/upload', { method: 'POST', body: form });
 });
 
@@ -738,10 +769,15 @@ ipcMain.handle('dialog:selectFile', async () => {
   return { fullPath, dir, relativePath };
 });
 
-ipcMain.handle('dialog:showSaveDialog', async (_event, options = {}) => {
-  const dialogOptions = options && typeof options === 'object' ? options : {};
+// file:saveText 只能写入用户刚在保存对话框中选择的路径，且只能写一次，防止渲染进程写任意文件
+let approvedSavePath = null;
+
+ipcMain.handle('dialog:showSaveDialog', async (_event, options) => {
+  const dialogOptions = sanitizeSaveDialogOptions(options);
+  approvedSavePath = null;
   const result = await dialog.showSaveDialog(mainWindow, dialogOptions);
   if (result.canceled || !result.filePath) return null;
+  approvedSavePath = path.resolve(result.filePath);
   return result.filePath;
 });
 
@@ -750,9 +786,15 @@ ipcMain.handle('file:saveText', async (_event, payload) => {
   if (!targetPath) {
     throw new Error('保存路径不能为空。');
   }
+  if (!approvedSavePath || path.resolve(targetPath) !== approvedSavePath) {
+    throw new Error('只能保存到通过保存对话框选择的路径。');
+  }
+  if (typeof payload.content !== 'string') {
+    throw new Error('保存内容必须是文本。');
+  }
 
-  const content = typeof payload?.content === 'string' ? payload.content : String(payload?.content ?? '');
-  await fs.promises.writeFile(targetPath, content, 'utf8');
+  approvedSavePath = null;
+  await fs.promises.writeFile(targetPath, payload.content, 'utf8');
   return { path: targetPath };
 });
 

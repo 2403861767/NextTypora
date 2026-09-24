@@ -189,6 +189,7 @@ declare global {
     nextTyproa?: {
       isElectron: boolean;
       getBackendConfig: () => Promise<BackendConfig>;
+      restartBackend?: () => Promise<{ ok: boolean; reason?: 'dev' | 'quitting' }>;
       getAppSettings: () => Promise<AppSettings>;
       patchAppSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
       setLastWorkspace: (folderPath: string) => Promise<AppSettings>;

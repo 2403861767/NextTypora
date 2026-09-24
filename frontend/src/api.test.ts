@@ -210,3 +210,70 @@ describe('api wrappers', () => {
     );
   });
 });
+
+describe('backend connection', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete window.nextTyproa;
+  });
+
+  // reconnectBackend 会改写模块内的后端配置，每个用例使用独立的模块实例
+  async function freshApi() {
+    vi.resetModules();
+    return import('./api');
+  }
+
+  it('health check bounds the request with a timeout and reports failures as offline', async () => {
+    const api = await freshApi();
+    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => Promise.resolve({ ok: true } as Response));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.healthCheck()).resolves.toBe(true);
+    expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+
+    fetchMock.mockImplementationOnce(() => Promise.reject(new DOMException('timed out', 'TimeoutError')));
+    await expect(api.healthCheck()).resolves.toBe(false);
+
+    fetchMock.mockImplementationOnce(() => Promise.resolve({ ok: false } as Response));
+    await expect(api.healthCheck()).resolves.toBe(false);
+  });
+
+  it('reconnect re-reads the Electron backend config so a restarted backend is reachable', async () => {
+    const api = await freshApi();
+    const getBackendConfig = vi.fn(() => Promise.resolve({ port: 43210, token: 'rotated-token' }));
+    window.nextTyproa = { getBackendConfig } as unknown as NonNullable<Window['nextTyproa']>;
+    const fetchMock = vi.fn((url: string) => (url.endsWith('/api/health')
+      ? Promise.resolve({ ok: true } as Response)
+      : jsonResponse({ path: 'D:/vault' })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.reconnectBackend()).resolves.toBe(true);
+    await api.getWorkspace();
+
+    expect(getBackendConfig).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:43210/api/health', expect.any(Object));
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:43210/api/workspace',
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-Auth-Token': 'rotated-token' }) }),
+    );
+  });
+
+  it('reconnect reports offline when the backend config cannot be read', async () => {
+    const api = await freshApi();
+    window.nextTyproa = {
+      getBackendConfig: () => Promise.reject(new Error('main process busy')),
+    } as unknown as NonNullable<Window['nextTyproa']>;
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.reconnectBackend()).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('network failures surface as network errors so the UI can detect a lost backend', async () => {
+    const api = await freshApi();
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))));
+
+    await expect(api.getWorkspace()).rejects.toMatchObject({ kind: 'network', status: 0 });
+  });
+});

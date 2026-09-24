@@ -597,6 +597,15 @@ html[data-theme='dark'] .editor-mode-toggle .ant-segmented-item-selected {
   }
 }
 
+.backend-offline-banner {
+  flex-shrink: 0;
+}
+
+.backend-offline-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .find-replace-panel {
   min-height: 42px;
   flex-shrink: 0;

@@ -38,6 +38,36 @@ class FileServiceTest {
     }
 
     @Test
+    void resolveSafeNormalizesSeparatorsAndInnerDotSegments(@TempDir Path vaultRoot) throws Exception {
+        Path expected = vaultRoot.resolve("notes/sub/x.md").toAbsolutePath().normalize();
+
+        assertEquals(expected, fileService.resolveSafe(vaultRoot, "notes\\sub\\x.md"));
+        assertEquals(expected, fileService.resolveSafe(vaultRoot, "/notes/sub/x.md"));
+        assertEquals(expected, fileService.resolveSafe(vaultRoot, "notes/other/../sub/./x.md"));
+    }
+
+    @Test
+    void resolveSafeRejectsTraversalInAnySeparatorStyle(@TempDir Path vaultRoot) {
+        for (String path : List.of("..\\outside.md", "notes/../../outside.md", "notes\\..\\..\\outside.md", "./../outside.md")) {
+            assertThrows(SecurityException.class, () -> fileService.resolveSafe(vaultRoot, path), path);
+        }
+    }
+
+    @Test
+    void resolveSafeNeverResolvesAbsolutePathOutsideVault(@TempDir Path parent) throws Exception {
+        Path vaultRoot = Files.createDirectory(parent.resolve("vault"));
+        Path outside = parent.resolve("outside").resolve("secret.md").toAbsolutePath();
+
+        // Windows 盘符路径会被拒绝；POSIX 绝对路径去掉前导 / 后被限制在 vault 内，两种结果都不能逃逸
+        try {
+            Path resolved = fileService.resolveSafe(vaultRoot, outside.toString());
+            assertTrue(resolved.startsWith(vaultRoot.toAbsolutePath().normalize()), resolved.toString());
+        } catch (SecurityException expected) {
+            // rejected
+        }
+    }
+
+    @Test
     void resolveSafeRejectsSymlinkPathSegment(@TempDir Path parent) throws Exception {
         Path vaultRoot = Files.createDirectory(parent.resolve("vault"));
         Path outside = Files.createDirectory(parent.resolve("outside"));

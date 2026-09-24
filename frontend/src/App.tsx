@@ -20,6 +20,7 @@ import {
   SunOutlined,
 } from '@ant-design/icons';
 import {
+  Alert,
   Button,
   ConfigProvider,
   Input,
@@ -43,6 +44,7 @@ import {
   healthCheck,
   initApiConfig,
   movePath,
+  reconnectBackend,
   renamePath,
   refreshWorkspace,
   saveNote,
@@ -109,6 +111,7 @@ function useDebouncedSave(
 ) {
   const timerRef = useRef<number>();
   const stateRef = useRef({ path, content, enabled, baseHash });
+  const inFlightRef = useRef<Promise<unknown> | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState('');
 
@@ -116,12 +119,26 @@ function useDebouncedSave(
 
   const flush = useCallback(async (): Promise<boolean> => {
     window.clearTimeout(timerRef.current);
+    // 同一时间只发一个保存请求：并发请求带着同一个 baseHash，后到的会被误判为外部修改（如后端恢复时积压的重试）
+    while (inFlightRef.current) {
+      await inFlightRef.current;
+    }
     const { path: savePath, content: saveContent, enabled: dirty, baseHash: saveBaseHash } = stateRef.current;
     if (!savePath || !dirty) return true;
 
     setSaveStatus('saving');
+    const request = saveNote(savePath, saveContent, saveBaseHash);
+    inFlightRef.current = request.catch(() => undefined);
     try {
-      const note = await saveNote(savePath, saveContent, saveBaseHash);
+      const note = await request;
+      // 重新渲染前 stateRef 仍是旧值：先同步新的 baseHash，排队中的 flush 才不会带着旧 hash 重复保存
+      if (stateRef.current.path === savePath) {
+        stateRef.current = {
+          ...stateRef.current,
+          baseHash: note.contentHash,
+          enabled: stateRef.current.enabled && stateRef.current.content !== saveContent,
+        };
+      }
       setSaveStatus('saved');
       setSaveError('');
       onSaved?.(note);
@@ -136,6 +153,8 @@ function useDebouncedSave(
       setSaveError(describeError(error, '保存失败'));
       setSaveStatus('error');
       return false;
+    } finally {
+      inFlightRef.current = null;
     }
   }, [onConflict, onSaved, onFileMissing]);
 
@@ -714,6 +733,77 @@ export default function App() {
     const nodes = await refreshWorkspace();
     setTree(nodes);
   }, []);
+
+  // 后端心跳：在线时每 5 秒探测，断线后每 3 秒重连；恢复后同步工作区并补存编辑器中未保存的修改
+  const [backendOnline, setBackendOnline] = useState(true);
+  const [backendRestarting, setBackendRestarting] = useState(false);
+  const backendOnlineRef = useRef(true);
+  const backendCheckRef = useRef<Promise<void> | null>(null);
+
+  const handleBackendReconnected = useCallback(async () => {
+    try {
+      if (workspacePath) {
+        const ws = await getWorkspace();
+        if (ws.path !== workspacePath) {
+          // 重启后的后端不一定加载了当前工作区
+          await setWorkspace(workspacePath);
+        }
+        await refreshTree();
+      }
+    } catch {
+      // 再次断线交给下一次心跳处理
+    }
+    await flushSave();
+  }, [workspacePath, refreshTree, flushSave]);
+  const handleBackendReconnectedRef = useRef(handleBackendReconnected);
+  handleBackendReconnectedRef.current = handleBackendReconnected;
+
+  // 保持引用稳定，避免每次渲染都重置心跳定时器
+  const checkBackend = useCallback((): Promise<void> => {
+    if (!backendCheckRef.current) {
+      backendCheckRef.current = (async () => {
+        const online = backendOnlineRef.current ? await healthCheck() : await reconnectBackend();
+        if (online === backendOnlineRef.current) return;
+        backendOnlineRef.current = online;
+        setBackendOnline(online);
+        if (online) await handleBackendReconnectedRef.current();
+      })().finally(() => {
+        backendCheckRef.current = null;
+      });
+    }
+    return backendCheckRef.current;
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return undefined;
+    const timer = window.setInterval(() => void checkBackend(), backendOnline ? 5000 : 3000);
+    return () => window.clearInterval(timer);
+  }, [ready, backendOnline, checkBackend]);
+
+  // 保存失败时立即探测，断线提示无需等到下一次心跳
+  useEffect(() => {
+    if (saveStatus === 'error') void checkBackend();
+  }, [saveStatus, checkBackend]);
+
+  const handleRestartBackend = useCallback(async () => {
+    const restart = window.nextTyproa?.restartBackend;
+    if (!restart) return;
+    setBackendRestarting(true);
+    try {
+      const result = await restart();
+      if (!result.ok) {
+        if (result.reason === 'dev') {
+          showError('开发模式下后端由 npm run dev 管理，请在终端中重启后端。');
+        }
+        return;
+      }
+      await checkBackend();
+    } catch (e) {
+      showError(describeError(e, '重启后端服务失败'));
+    } finally {
+      setBackendRestarting(false);
+    }
+  }, [checkBackend, showError]);
 
   useEffect(() => {
     if (!workspacePath) return;
@@ -2048,6 +2138,25 @@ export default function App() {
             </div>
           </div>
         </header>
+
+        {!backendOnline && (
+          <Alert
+            banner
+            type="warning"
+            className="backend-offline-banner"
+            title="与后端服务的连接已断开，正在自动重连…未保存的修改仍保留在编辑器中，恢复连接后会自动保存。"
+            action={(
+              <div className="backend-offline-actions">
+                <Button size="small" onClick={() => void checkBackend()}>立即重试</Button>
+                {window.nextTyproa?.restartBackend && (
+                  <Button size="small" type="primary" loading={backendRestarting} onClick={() => void handleRestartBackend()}>
+                    重启后端服务
+                  </Button>
+                )}
+              </div>
+            )}
+          />
+        )}
 
         <AnimatePresence initial={false}>
           {findOpen && selectedPath && (

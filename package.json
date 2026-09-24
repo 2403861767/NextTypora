@@ -14,6 +14,7 @@
     "build:frontend": "cd frontend && npm run build",
     "build:backend": "cd backend && mvn -DskipTests package && node ../scripts/copy-backend-jar.js",
     "build": "npm run build:backend && npm run build:frontend",
+    "test:electron": "node --test \"electron/*.test.js\"",
     "dist:verify": "cd backend && mvn test && cd .. && npm run build && node scripts/verify-dist-resources.js",
     "prepare:resources": "node scripts/copy-backend-jar.js && node scripts/prepare-jre.js",
     "dist": "npm run build && npm run prepare:resources && npx electron-builder --win dir && powershell -ExecutionPolicy Bypass -File scripts/package-zip.ps1",
@@ -38,6 +39,7 @@
     },
     "files": [
       "electron/**/*",
+      "!electron/**/*.test.js",
       "frontend/dist/**/*",
       "package.json"
     ],

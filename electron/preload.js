@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('nextTyproa', {
   isElectron: true,
   getBackendConfig: () => ipcRenderer.invoke('backend:getConfig'),
+  restartBackend: () => ipcRenderer.invoke('backend:restart'),
   getAppSettings: () => ipcRenderer.invoke('settings:get'),
   patchAppSettings: (patch) => ipcRenderer.invoke('settings:patch', patch),
   setLastWorkspace: (folderPath) => ipcRenderer.invoke('settings:setLastWorkspace', folderPath),
