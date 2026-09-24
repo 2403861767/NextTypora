@@ -1,5 +1,6 @@
 package com.nexttyproa.service;
 
+import com.nexttyproa.dto.SearchResponseDto;
 import com.nexttyproa.dto.SearchResultDto;
 import com.nexttyproa.dto.SearchStatusDto;
 import org.junit.jupiter.api.Test;
@@ -120,5 +121,55 @@ class IndexServiceTest {
         assertTrue(indexService.search("vault a").isEmpty());
         assertEquals(1, indexService.search("vault b").size());
         assertEquals(1, indexService.status().getIndexedFiles());
+    }
+
+    @Test
+    void snippetUsesOriginalCasingAndLineNumber(@TempDir Path vaultRoot) throws Exception {
+        IndexService indexService = new IndexService(new FileService());
+        Files.writeString(vaultRoot.resolve("note.md"), "# Title\n\nSome Mixed CASE text");
+        indexService.reindexVault(vaultRoot);
+
+        List<SearchResultDto> results = indexService.search("case");
+
+        assertEquals(1, results.size());
+        assertTrue(results.get(0).getSnippet().contains("<mark>CASE</mark>"));
+        assertEquals(3, results.get(0).getLineNumber());
+    }
+
+    @Test
+    void searchReadsFilesOnlyForReturnedPage(@TempDir Path vaultRoot) throws Exception {
+        AtomicInteger reads = new AtomicInteger();
+        FileService fileService = new FileService() {
+            @Override
+            public String readFile(Path file) throws IOException {
+                reads.incrementAndGet();
+                return super.readFile(file);
+            }
+        };
+        IndexService indexService = new IndexService(fileService);
+        for (int i = 0; i < 5; i++) {
+            Files.writeString(vaultRoot.resolve("note" + i + ".md"), "# Note " + i + "\npaged-keyword");
+        }
+        indexService.reindexVault(vaultRoot);
+
+        reads.set(0);
+        SearchResponseDto page = indexService.searchPage("paged-keyword", null, null, 2, 0);
+
+        assertEquals(5, page.getTotal());
+        assertEquals(2, page.getResults().size());
+        assertEquals(2, reads.get());
+    }
+
+    @Test
+    void snippetFallsBackToIndexedTextWhenFileIsGone(@TempDir Path vaultRoot) throws Exception {
+        IndexService indexService = new IndexService(new FileService());
+        Files.writeString(vaultRoot.resolve("gone.md"), "# Gone\nvanishing-keyword here");
+        indexService.reindexVault(vaultRoot);
+        Files.delete(vaultRoot.resolve("gone.md"));
+
+        List<SearchResultDto> results = indexService.search("vanishing-keyword");
+
+        assertEquals(1, results.size());
+        assertTrue(results.get(0).getSnippet().contains("<mark>vanishing-keyword</mark>"));
     }
 }

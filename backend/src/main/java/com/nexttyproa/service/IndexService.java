@@ -62,13 +62,17 @@ public class IndexService {
                     ? Files.getLastModifiedTime(file).toInstant()
                     : Instant.now();
             ParsedMarkdown parsed = parseMarkdown(relativePath, content);
-            notes.put(FileService.normalizePathSeparators(relativePath), new IndexedNote(
-                    FileService.normalizePathSeparators(relativePath),
+            String normalizedPath = FileService.normalizePathSeparators(relativePath);
+            String frontmatter = String.join(" ", parsed.frontmatter().keySet()) + " " + String.join(" ", parsed.frontmatter().values());
+            // Only lowercased search text is kept; snippets re-read the original file for the returned page.
+            notes.put(normalizedPath, new IndexedNote(
+                    normalizedPath,
                     parsed.title(),
-                    content == null ? "" : content,
-                    parsed.frontmatter(),
-                    parsed.tags(),
-                    fileService.hashContent(content),
+                    (content == null ? "" : content).toLowerCase(Locale.ROOT),
+                    parsed.title().toLowerCase(Locale.ROOT),
+                    normalizedPath.toLowerCase(Locale.ROOT),
+                    frontmatter.toLowerCase(Locale.ROOT),
+                    String.join(" ", parsed.tags()).toLowerCase(Locale.ROOT),
                     updatedAt,
                     size
             ));
@@ -191,7 +195,7 @@ public class IndexService {
         }
 
         Set<SearchScope> scopes = parseScopes(scope);
-        List<SearchHit> hits = notes.values().stream()
+        List<SearchHit> hits = notes.values().parallelStream()
                 .map(note -> match(note, normalizedQuery, scopes))
                 .filter(SearchHit::matched)
                 .sorted(comparatorFor(sort))
@@ -199,14 +203,7 @@ public class IndexService {
         List<SearchResultDto> results = hits.stream()
                 .skip(safeOffset)
                 .limit(safeLimit)
-                .map(hit -> new SearchResultDto(
-                        hit.note().path(),
-                        hit.note().title(),
-                        hit.snippet(),
-                        hit.lineNumber(),
-                        hit.score(),
-                        hit.note().updatedAt()
-                ))
+                .map(hit -> toResult(hit, normalizedQuery))
                 .toList();
         return new SearchResponseDto(results, hits.size(), safeLimit, safeOffset, responseSort);
     }
@@ -230,24 +227,18 @@ public class IndexService {
     }
 
     private SearchHit match(IndexedNote note, String query, Set<SearchScope> scopes) {
-        String title = note.title().toLowerCase(Locale.ROOT);
-        String content = note.content().toLowerCase(Locale.ROOT);
-        String path = note.path().toLowerCase(Locale.ROOT);
-        String frontmatter = String.join(" ", note.frontmatter().keySet()) + " " + String.join(" ", note.frontmatter().values());
-        String tags = String.join(" ", note.tags());
-
-        int titleIndex = scopes.contains(SearchScope.TITLE) ? title.indexOf(query) : -1;
-        int contentIndex = scopes.contains(SearchScope.BODY) ? content.indexOf(query) : -1;
-        int pathIndex = scopes.contains(SearchScope.PATH) ? path.indexOf(query) : -1;
-        int frontmatterIndex = scopes.contains(SearchScope.FRONTMATTER) ? frontmatter.toLowerCase(Locale.ROOT).indexOf(query) : -1;
-        int tagsIndex = scopes.contains(SearchScope.TAGS) ? tags.toLowerCase(Locale.ROOT).indexOf(query) : -1;
+        int titleIndex = scopes.contains(SearchScope.TITLE) ? note.searchTitle().indexOf(query) : -1;
+        int contentIndex = scopes.contains(SearchScope.BODY) ? note.searchBody().indexOf(query) : -1;
+        int pathIndex = scopes.contains(SearchScope.PATH) ? note.searchPath().indexOf(query) : -1;
+        int frontmatterIndex = scopes.contains(SearchScope.FRONTMATTER) ? note.searchFrontmatter().indexOf(query) : -1;
+        int tagsIndex = scopes.contains(SearchScope.TAGS) ? note.searchTags().indexOf(query) : -1;
 
         double score = 0.0;
         if (titleIndex >= 0) {
-            score += 80.0 + startsWithBonus(title, query);
+            score += 80.0 + startsWithBonus(note.searchTitle(), query);
         }
         if (contentIndex >= 0) {
-            score += 25.0 + countOccurrences(content, query) * 8.0;
+            score += 25.0 + countOccurrences(note.searchBody(), query) * 8.0;
         }
         if (pathIndex >= 0) {
             score += 45.0;
@@ -259,16 +250,38 @@ public class IndexService {
             score += 70.0;
         }
 
-        boolean matched = score > 0.0;
-        int snippetIndex = contentIndex >= 0 ? contentIndex : titleIndex;
-        String snippetSource = contentIndex >= 0 ? note.content() : note.title();
-        int lineNumber = contentIndex >= 0 ? lineNumberForIndex(note.content(), contentIndex) : 1;
-        if (snippetIndex < 0) {
-            snippetIndex = firstSearchableIndex(note.content(), query);
-            snippetSource = note.content();
-            lineNumber = snippetIndex >= 0 ? lineNumberForIndex(note.content(), snippetIndex) : 1;
+        return new SearchHit(note, score > 0.0, contentIndex >= 0, titleIndex, score);
+    }
+
+    /**
+     * Builds the snippet and line number for one returned hit. Only the requested page reaches here,
+     * so the original text is read from disk instead of being held in the index.
+     */
+    private SearchResultDto toResult(SearchHit hit, String query) {
+        IndexedNote note = hit.note();
+        String snippet;
+        int lineNumber = 1;
+        if (!hit.bodyMatched() && hit.titleIndex() >= 0) {
+            snippet = snippet(note.title(), hit.titleIndex(), query);
+        } else {
+            String content = contentForSnippet(note);
+            int index = content.toLowerCase(Locale.ROOT).indexOf(query);
+            snippet = snippet(content, index, query);
+            lineNumber = index >= 0 ? lineNumberForIndex(content, index) : 1;
         }
-        return new SearchHit(note, matched, snippet(snippetSource, snippetIndex, query), lineNumber, score);
+        return new SearchResultDto(note.path(), note.title(), snippet, lineNumber, hit.score(), note.updatedAt());
+    }
+
+    private String contentForSnippet(IndexedNote note) {
+        Path root = indexedRoot;
+        if (root != null) {
+            try {
+                return fileService.readFile(fileService.resolveSafe(root, note.path()));
+            } catch (IOException | SecurityException e) {
+                log.debug("Falling back to indexed text for snippet of {}: {}", note.path(), e.getMessage());
+            }
+        }
+        return note.searchBody();
     }
 
     private String snippet(String content, int index, String query) {
@@ -442,10 +455,6 @@ public class IndexService {
         return count;
     }
 
-    private int firstSearchableIndex(String content, String query) {
-        return content == null ? -1 : content.toLowerCase(Locale.ROOT).indexOf(query);
-    }
-
     private int lineNumberForIndex(String content, int index) {
         if (content == null || index <= 0) {
             return 1;
@@ -481,20 +490,17 @@ public class IndexService {
     private record IndexedNote(
             String path,
             String title,
-            String content,
-            Map<String, String> frontmatter,
-            Set<String> tags,
-            String hash,
+            String searchBody,
+            String searchTitle,
+            String searchPath,
+            String searchFrontmatter,
+            String searchTags,
             Instant updatedAt,
             long size
     ) {
-        private IndexedNote {
-            frontmatter = Map.copyOf(frontmatter);
-            tags = Set.copyOf(tags);
-        }
     }
 
-    private record SearchHit(IndexedNote note, boolean matched, String snippet, int lineNumber, double score) {
+    private record SearchHit(IndexedNote note, boolean matched, boolean bodyMatched, int titleIndex, double score) {
         Instant updatedAt() {
             return note.updatedAt();
         }

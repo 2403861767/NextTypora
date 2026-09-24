@@ -286,7 +286,7 @@ flushSaveTimeout = setTimeout(() => {
 
 ## P2 - 性能 / UI / 代码隐患
 
-### - [ ] BUG-P2-001: IndexService 性能 - 大文件全文存储占用内存
+### - [x] BUG-P2-001: IndexService 性能 - 大文件全文存储占用内存
 **问题概述**: `IndexService` 的 `IndexedNote` 记录完整文件内容，大型 vault 会占用数百 MB 内存，且内容仅用于生成 snippet。
 
 **涉及文件**:
@@ -317,9 +317,11 @@ private record IndexedNote(
 
 **优化建议**: 只存储 title、tags、frontmatter 和路径，搜索时按需读取文件生成 snippet。
 
+**处理结果**: `IndexedNote` 不再保存原始大小写正文、未使用的 hash 以及 frontmatter/tags 集合，只保留一次性小写化的检索文本；搜索时不再对整个 vault 做 `toLowerCase()` 拷贝，snippet 仅对返回页的文件按需从磁盘读取。小写正文仍常驻内存，这是有意保留的——子串搜索（中文、部分单词、`++special++` 等标点）需要它。
+
 ---
 
-### - [ ] BUG-P2-002: 搜索性能 - 每次搜索都是全量扫描
+### - [x] BUG-P2-002: 搜索性能 - 每次搜索都是全量扫描
 **问题概述**: 搜索使用 `toLowerCase().indexOf()`，时间复杂度 O(n*m)，大型 vault 中搜索响应慢。
 
 **涉及文件**:
