@@ -439,7 +439,7 @@ const [recentFiles, setRecentFiles] = useState<RecentFileRef[]>([]);
 
 ---
 
-### - [ ] BUG-P2-007: 搜索 XSS 风险 - snippet 未完全转义
+### - [x] BUG-P2-007: 搜索 XSS 风险 - snippet 未完全转义
 **问题概述**: 搜索结果 snippet 使用 `escapeHtml()` 但仍注入 `<mark>` 标签，如果文件名包含恶意内容可能导致 XSS。
 
 **涉及文件**:
@@ -466,7 +466,7 @@ return prefix
 
 ---
 
-### - [ ] BUG-P2-008: Auth token 安全 - dev 模式硬编码 token
+### - [x] BUG-P2-008: Auth token 安全 - dev 模式硬编码 token
 **问题概述**: Dev 模式使用硬编码的 `dev-token-change-me`，如果用户在生产环境误用 dev 配置会导致安全风险。
 
 **涉及文件**:

@@ -12,7 +12,7 @@ import type {
 
 let config: BackendConfig = {
   port: Number(import.meta.env.VITE_BACKEND_PORT || 8080),
-  token: import.meta.env.VITE_AUTH_TOKEN || 'dev-token-change-me',
+  token: import.meta.env.VITE_AUTH_TOKEN || '',
 };
 
 export async function initApiConfig(): Promise<BackendConfig> {

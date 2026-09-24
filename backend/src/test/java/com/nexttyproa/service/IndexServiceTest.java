@@ -172,4 +172,22 @@ class IndexServiceTest {
         assertEquals(1, results.size());
         assertTrue(results.get(0).getSnippet().contains("<mark>vanishing-keyword</mark>"));
     }
+
+    @Test
+    void snippetEscapesMarkupFromTitleAndBody(@TempDir Path vaultRoot) throws Exception {
+        IndexService indexService = new IndexService(new FileService());
+        Files.writeString(vaultRoot.resolve("xss.md"),
+                "# <script>alert('XSS')</script>\n\n<img src=x onerror=\"alert(1)\"> payload-keyword");
+        indexService.reindexVault(vaultRoot);
+
+        for (String query : List.of("payload-keyword", "script")) {
+            List<SearchResultDto> results = indexService.search(query);
+            assertEquals(1, results.size());
+            String snippet = results.get(0).getSnippet();
+            String withoutMarks = snippet.replace("<mark>", "").replace("</mark>", "");
+            assertTrue(snippet.contains("<mark>"), snippet);
+            assertTrue(withoutMarks.chars().noneMatch(c -> c == '<' || c == '>' || c == '"' || c == '\''), snippet);
+        }
+        assertTrue(indexService.search("script").get(0).getSnippet().contains("&lt;<mark>script</mark>&gt;"));
+    }
 }

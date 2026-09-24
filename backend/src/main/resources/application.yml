@@ -7,7 +7,7 @@ spring:
     name: nexttyproa-backend
 
 nexttyproa:
-  auth-token: ${AUTH_TOKEN:dev-token-change-me}
+  auth-token: ${AUTH_TOKEN:}
   vault-path: ${VAULT_PATH:}
 
 logging:

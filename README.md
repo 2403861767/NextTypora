@@ -219,10 +219,10 @@ npm run dist:setup
 | `POST`                            | `/api/asset`         | 本地图片上传           |
 | `GET`                             | `/api/asset`         | 本地图片读取           |
 
-开发模式请求后端接口时需要携带：
+开发模式请求后端接口时需要携带 `X-Auth-Token`。`npm run dev` 每次启动都会生成一个随机 token，并在启动时打印 `[dev] X-Auth-Token for this session: <token>`；单独运行 `npm run dev:backend` 时，后端会输出 `NEXTTYPROA_TOKEN=<token>`。也可以通过环境变量 `AUTH_TOKEN` 自行指定：
 
 ```http
-X-Auth-Token: dev-token-change-me
+X-Auth-Token: <启动时打印的 token>
 ```
 
 ## 配置说明

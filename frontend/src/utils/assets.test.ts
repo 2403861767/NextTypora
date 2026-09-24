@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildAssetDisplayUrl,
   invalidateAssetConfigCache,
@@ -8,8 +8,15 @@ import {
 } from './assets';
 
 describe('asset URL helpers', () => {
+  beforeEach(() => {
+    window.nextTyproa = {
+      getBackendConfig: async () => ({ port: 8080, token: 'test-token' }),
+    } as unknown as NonNullable<typeof window.nextTyproa>;
+  });
+
   afterEach(() => {
     invalidateAssetConfigCache();
+    delete window.nextTyproa;
   });
 
   it('resolves bare local image names into the note asset folder', () => {
@@ -27,7 +34,7 @@ describe('asset URL helpers', () => {
     expect(url.origin).toBe('http://127.0.0.1:8080');
     expect(url.pathname).toBe('/api/asset');
     expect(url.searchParams.get('path')).toBe('docs/guide.assets/cover 1.png');
-    expect(url.searchParams.get('token')).toBe('dev-token-change-me');
+    expect(url.searchParams.get('token')).toBe('test-token');
   });
 
   it('proxies local image sources asynchronously', async () => {
@@ -36,7 +43,7 @@ describe('asset URL helpers', () => {
 
     expect(url.pathname).toBe('/api/asset');
     expect(url.searchParams.get('path')).toBe('docs/guide.assets/cover.png');
-    expect(url.searchParams.get('token')).toBe('dev-token-change-me');
+    expect(url.searchParams.get('token')).toBe('test-token');
   });
 
   it('proxies local image sources synchronously with the supplied base URL and token', () => {

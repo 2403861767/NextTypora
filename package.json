@@ -6,10 +6,11 @@
   "author": "nextTyproa",
   "license": "MIT",
   "scripts": {
-    "dev:backend": "cd backend && mvn spring-boot:run -Dspring-boot.run.arguments=--nexttyproa.auth-token=dev-token-change-me",
+    "dev:backend": "cd backend && mvn spring-boot:run",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:electron": "wait-on http://127.0.0.1:8080/api/health http://127.0.0.1:5173 && cross-env BACKEND_PORT=8080 electron .",
-    "dev": "concurrently -k -n backend,frontend,electron -c blue,green,magenta \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:electron\"",
+    "dev": "node scripts/dev.js",
+    "dev:all": "concurrently -k -n backend,frontend,electron -c blue,green,magenta \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:electron\"",
     "build:frontend": "cd frontend && npm run build",
     "build:backend": "cd backend && mvn -DskipTests package && node ../scripts/copy-backend-jar.js",
     "build": "npm run build:backend && npm run build:frontend",

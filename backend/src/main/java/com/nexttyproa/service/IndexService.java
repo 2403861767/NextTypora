@@ -476,7 +476,9 @@ public class IndexService {
         return value
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
-                .replace(">", "&gt;");
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 
     private enum SearchScope {

@@ -1,8 +1,10 @@
 param(
   [string]$BaseUrl = "http://127.0.0.1:8080",
-  [string]$Token = "dev-token-change-me",
+  [string]$Token = $env:AUTH_TOKEN,
   [string]$VaultPath = "$env:TEMP\nexttyproa-smoke-vault"
 )
+
+if (-not $Token) { throw "Pass -Token <token> (printed by npm run dev, or NEXTTYPROA_TOKEN= in the backend log)" }
 
 $headers = @{ "X-Auth-Token" = $Token; "Content-Type" = "application/json" }
 

@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const { loadSettings, patchSettings } = require('./settings');
 
@@ -8,7 +9,7 @@ const isDev = !app.isPackaged;
 let mainWindow = null;
 let splashWindow = null;
 let backendProcess = null;
-let backendConfig = { port: 8080, token: 'dev-token-change-me' };
+let backendConfig = { port: 8080, token: '' };
 let pendingOpenFile = null;
 let pageReady = false;
 let quitting = false;
@@ -234,14 +235,19 @@ function failStartup(message) {
 
 function startBackend() {
   return new Promise((resolve, reject) => {
-    const token = `token-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    backendConfig.token = token;
-
     if (isDev) {
+      // dev 后端由 npm run dev 单独启动，token 由 scripts/dev.js 通过 AUTH_TOKEN 共享
       backendConfig.port = Number(process.env.BACKEND_PORT || 8080);
+      backendConfig.token = process.env.AUTH_TOKEN || '';
+      if (!backendConfig.token) {
+        console.warn('AUTH_TOKEN is not set; start the dev environment with `npm run dev`.');
+      }
       resolve(backendConfig);
       return;
     }
+
+    const token = crypto.randomBytes(24).toString('hex');
+    backendConfig.token = token;
 
     const javaBin = resolveJavaBin();
     const jarPath = getResourcesPath('backend.jar');
