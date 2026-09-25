@@ -21,3 +21,4 @@ frontend/dist/
 backend/target/
 release/
 .nexttyproa-backups
+test/
