@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Crepe } from '@milkdown/crepe';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { Milkdown, MilkdownProvider, useEditor, useInstance } from '@milkdown/react';
@@ -8,6 +8,7 @@ import { renderCodeBlockPreview } from './CodeBlockPreview';
 import { proxyImageUrl } from '../utils/assets';
 import { uploadEditorImage } from '../utils/imageUpload';
 import { normalizeEditorImageMarkdown } from '../utils/markdownImages';
+import { joinFrontmatter, splitFrontmatter } from '../utils/frontmatter';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/classic.css';
 
@@ -37,6 +38,9 @@ function EditorInner({
   const notePathRef = useRef(notePath);
   const isDarkRef = useRef(isDark);
   const [loading, getEditor] = useInstance();
+  // Milkdown 没有 frontmatter 节点，会把开头的 --- 解析成分隔线 + setext 标题并按正文重新序列化，
+  // 所以编辑器只接管正文，frontmatter 原样保留并在输出时拼回去（在源码模式中编辑）
+  const [frontmatter] = useState(() => splitFrontmatter(value).frontmatter);
   onChangeRef.current = onChange;
   onReadyRef.current = onReady;
   notePathRef.current = notePath;
@@ -113,7 +117,7 @@ function EditorInner({
 
       const crepe = new Crepe({
         root,
-        defaultValue: value,
+        defaultValue: splitFrontmatter(value).body,
         features: {
           [Crepe.Feature.ListItem]: true,
           [Crepe.Feature.TopBar]: true,
@@ -149,10 +153,10 @@ function EditorInner({
         // 载入笔记不会触发 markdownUpdated（它只在文档被修改后触发），所以挂载时主动把序列化后的
         // 初始内容交给 onReady；此后每一次 markdownUpdated 都是用户编辑，必须走 onChange 才会被标记为未保存
         listener.mounted((ctx) => {
-          onReadyRef.current?.(normalizeEditorImageMarkdown(getMarkdown()(ctx)));
+          onReadyRef.current?.(joinFrontmatter(frontmatter, normalizeEditorImageMarkdown(getMarkdown()(ctx))));
         });
         listener.markdownUpdated((_ctx, markdown) => {
-          onChangeRef.current(normalizeEditorImageMarkdown(markdown));
+          onChangeRef.current(joinFrontmatter(frontmatter, normalizeEditorImageMarkdown(markdown)));
         });
       });
 
@@ -163,6 +167,11 @@ function EditorInner({
 
   return (
     <div ref={containerRef} className="typora-editor">
+      {frontmatter && (
+        <pre className="typora-frontmatter" aria-label="YAML Frontmatter" title="Frontmatter 请在源码模式中编辑">
+          {frontmatter.replace(/\r\n/g, '\n').trimEnd()}
+        </pre>
+      )}
       <Milkdown />
     </div>
   );

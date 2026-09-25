@@ -1825,6 +1825,27 @@ html[data-theme='dark'] .search-index-warning {
   outline: none;
 }
 
+/* 只读的 YAML frontmatter（不交给 Milkdown，在源码模式中编辑） */
+.typora-frontmatter {
+  box-sizing: border-box;
+  width: min(calc(100% - 36px), calc(var(--content-width) - 72px));
+  margin: 40px auto 0;
+  padding: 10px 14px;
+  font-family: var(--editor-code-font);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  background: var(--code-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.typora-editor:has(> .typora-frontmatter) .ProseMirror {
+  padding-top: 24px !important;
+}
+
 .typora-editor .ProseMirror h1,
 .typora-editor .ProseMirror h2,
 .typora-editor .ProseMirror h3,
