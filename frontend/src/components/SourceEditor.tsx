@@ -13,13 +13,14 @@ import { uploadEditorImagesMarkdown } from '../utils/imageUpload';
 interface SourceEditorProps {
   value: string;
   onChange: (value: string) => void;
+  noteKey: string;
   notePath: string;
   isDark: boolean;
   spellCheckEnabled: boolean;
   typewriterMode?: boolean;
 }
 
-export function SourceEditor({ value, onChange, notePath, isDark, spellCheckEnabled, typewriterMode = false }: SourceEditorProps) {
+export function SourceEditor({ value, onChange, noteKey, notePath, isDark, spellCheckEnabled, typewriterMode = false }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -232,7 +233,8 @@ export function SourceEditor({ value, onChange, notePath, isDark, spellCheckEnab
       view.destroy();
       viewRef.current = null;
     };
-  }, [isDark, spellCheckEnabled]);
+    // 每篇笔记使用独立的 EditorState：切换笔记时重建，撤销历史不会跨笔记
+  }, [isDark, spellCheckEnabled, noteKey]);
 
   useEffect(() => {
     const view = viewRef.current;

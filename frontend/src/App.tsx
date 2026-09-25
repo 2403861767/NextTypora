@@ -2275,6 +2275,7 @@ export default function App() {
                 {editorMode === 'source' ? (
                   <motion.div key="source" className="editor-mode-motion" {...editorCrossfadeMotion}>
                   <SourceEditor
+                    noteKey={`${selectedPath}:${editorRevision}`}
                     value={content}
                     onChange={setContent}
                     notePath={selectedPath}
