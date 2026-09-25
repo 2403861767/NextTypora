@@ -1,5 +1,5 @@
 import { render, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { MarkdownEditor } from './MarkdownEditor';
 
 describe('MarkdownEditor', () => {
@@ -142,6 +142,130 @@ describe('MarkdownEditor', () => {
       const loaded: string = onReady.mock.calls[0][0];
       expect(loaded.slice(0, crlfFrontmatter.length)).toBe(crlfFrontmatter);
       expect(loaded.slice(crlfFrontmatter.length)).toContain('正文段落');
+    });
+  });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P1-002：第一次编辑就把整篇文件重新格式化（硬换行、列表、标题、表格、文件结尾…）
+  describe('keeps untouched markdown byte-for-byte', () => {
+    // 测试用 ascii-notes.md 的原始内容（test/e2e-vault），第 35 行带两个尾随空格的硬换行
+    const ASCII_NOTES = [
+      'Markdown Syntax Coverage',
+      '========================',
+      '',
+      'Setext heading above, *emphasis* with stars and __strong__ with underscores.',
+      '',
+      '* star bullet one',
+      '* star bullet two',
+      '    * nested with four spaces',
+      '',
+      '+ plus bullet',
+      '',
+      '1) paren ordered',
+      '2) second',
+      '',
+      '| Left | Center | Right |',
+      '|:-----|:------:|------:|',
+      '| a    |   b    |     c |',
+      '',
+      '```js',
+      'console.log("code block");',
+      '```',
+      '',
+      '- [ ] task open',
+      '- [x] task done',
+      '',
+      'Footnote reference[^1].',
+      '',
+      '[^1]: The footnote text.',
+      '',
+      'Line with trailing double space  ',
+      'hard break above.',
+      '',
+      '<div align="center">raw html block</div>',
+      '',
+      '***',
+      '',
+      'Final paragraph with a [link](https://example.com "title") and an ![image](missing.png).',
+      '',
+    ].join('\n');
+
+    beforeAll(() => {
+      // Crepe 的代码块组件依赖 IntersectionObserver，jsdom 没有
+      if (!('IntersectionObserver' in window)) {
+        Object.defineProperty(window, 'IntersectionObserver', {
+          configurable: true,
+          value: class {
+            observe() {}
+            unobserve() {}
+            disconnect() {}
+            takeRecords() { return []; }
+          },
+        });
+      }
+    });
+
+    function renderNote(value: string, noteKey: string) {
+      const onReady = vi.fn();
+      const onChange = vi.fn();
+      const view = render(
+        <MarkdownEditor
+          value={value}
+          onChange={onChange}
+          onReady={onReady}
+          noteKey={noteKey}
+          notePath="ascii-notes.md"
+          spellCheckEnabled={false}
+          isDark={false}
+        />,
+      );
+      return { ...view, onReady, onChange };
+    }
+
+    /** 在文本以 startsWith 开头的段落末尾输入（改的是段落最后一个文本节点） */
+    function typeAtEndOf(container: HTMLElement, startsWith: string, typed: string) {
+      const paragraph = Array.from(container.querySelectorAll('.ProseMirror p'))
+        .find((element) => element.textContent?.startsWith(startsWith));
+      const text = paragraph?.lastChild;
+      expect(text?.nodeType).toBe(Node.TEXT_NODE);
+      (text as Text).data += typed;
+    }
+
+    it('reports the loaded note exactly as it is on disk', async () => {
+      const { onReady } = renderNote(ASCII_NOTES, 'ascii-notes.md:load');
+
+      await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1), { timeout: 5000 });
+      expect(onReady.mock.calls[0][0]).toBe(ASCII_NOTES);
+    });
+
+    it('changes only the edited line on the first edit', async () => {
+      const { container, onReady, onChange } = renderNote(ASCII_NOTES, 'ascii-notes.md:edit-paragraph');
+      await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1), { timeout: 5000 });
+
+      typeAtEndOf(container, 'Setext heading above', ' X');
+
+      await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
+      expect(onChange.mock.calls.at(-1)?.[0]).toBe(ASCII_NOTES.replace('underscores.', 'underscores. X'));
+    });
+
+    it('editing a tight task list keeps it tight with its "-" markers and leaves everything else untouched', async () => {
+      const { container, onReady, onChange } = renderNote(ASCII_NOTES, 'ascii-notes.md:edit-list');
+      await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1), { timeout: 5000 });
+
+      typeAtEndOf(container, 'task open', ' Y');
+
+      await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
+      expect(onChange.mock.calls.at(-1)?.[0]).toBe(ASCII_NOTES.replace('- [ ] task open', '- [ ] task open Y'));
+    });
+
+    it('never merges an edited list into a neighbouring list', async () => {
+      // 两个相邻列表因为符号不同才是两个列表；重新序列化被编辑的那个时不能让它们合并成一个
+      const { container, onReady, onChange } = renderNote('- a\n\n+ b\n', 'lists.md:0');
+      await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1), { timeout: 5000 });
+
+      typeAtEndOf(container, 'b', ' X');
+
+      await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
+      expect(onChange.mock.calls.at(-1)?.[0]).toMatch(/^([-*+]) a\n\n(?!\1)[-*+] b X\n$/);
     });
   });
 });

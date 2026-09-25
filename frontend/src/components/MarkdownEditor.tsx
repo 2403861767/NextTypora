@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { Crepe } from '@milkdown/crepe';
-import { editorViewCtx } from '@milkdown/kit/core';
+import { editorViewCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
+import type { Ctx } from '@milkdown/kit/ctx';
 import type { Node as ProseNode } from '@milkdown/kit/prose/model';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { Milkdown, MilkdownProvider, useEditor, useInstance } from '@milkdown/react';
@@ -11,6 +12,7 @@ import { proxyImageUrl } from '../utils/assets';
 import { uploadEditorImage } from '../utils/imageUpload';
 import { normalizeEditorImageMarkdown } from '../utils/markdownImages';
 import { joinFrontmatter, splitFrontmatter } from '../utils/frontmatter';
+import { createMarkdownBlockPreserver, joinListsBySpread, type MarkdownBlockPreserver } from '../utils/preserveMarkdownBlocks';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/classic.css';
 
@@ -140,9 +142,10 @@ function EditorInner({
       const uploadImage = (file: File) => uploadEditorImage(notePathRef.current, file);
       const resolveImage = (url: string) => proxyImageUrl(notePathRef.current, url);
 
+      const body = splitFrontmatter(value).body;
       const crepe = new Crepe({
         root,
-        defaultValue: splitFrontmatter(value).body,
+        defaultValue: body,
         features: {
           [Crepe.Feature.ListItem]: true,
           [Crepe.Feature.TopBar]: true,
@@ -174,15 +177,32 @@ function EditorInner({
         },
       });
 
+      // 重新序列化改动过的块时：紧凑列表保持紧凑（修正 Milkdown 字符串 spread），无序列表用最常见的 "-"
+      crepe.editor.config((ctx) => {
+        ctx.update(remarkStringifyOptionsCtx, (options) => ({
+          ...options,
+          bullet: '-' as const,
+          join: [...(options.join ?? []), joinListsBySpread],
+        }));
+      });
+
       crepe.on((listener) => {
         // 最近一次通过 onReady/onChange 上报的文档；markdownUpdated 有 200ms 防抖，编辑器销毁时还会直接取消，
         // 所以 App 在切换、关闭、退出前要通过 pendingMarkdownRef 同步取走这之后的修改
         let reportedDoc: ProseNode | null = null;
+        // 未改动的块原样沿用载入时的文本，只有改动过的块重新序列化
+        let preserver: MarkdownBlockPreserver | null = null;
+        const toMarkdown = (ctx: Ctx) => {
+          const { doc } = ctx.get(editorViewCtx).state;
+          const markdown = preserver ? preserver.serialize(doc) : normalizeEditorImageMarkdown(getMarkdown()(ctx));
+          return joinFrontmatter(frontmatter, markdown);
+        };
         // 载入笔记不会触发 markdownUpdated（它只在文档被修改后触发），所以挂载时主动把序列化后的
         // 初始内容交给 onReady；此后每一次 markdownUpdated 都是用户编辑，必须走 onChange 才会被标记为未保存
         listener.mounted((ctx) => {
           reportedDoc = ctx.get(editorViewCtx).state.doc;
-          onReadyRef.current?.(joinFrontmatter(frontmatter, normalizeEditorImageMarkdown(getMarkdown()(ctx))));
+          preserver = createMarkdownBlockPreserver(ctx, body, reportedDoc, normalizeEditorImageMarkdown);
+          onReadyRef.current?.(toMarkdown(ctx));
           if (disposedRef.current) return;
           const reader: PendingMarkdownReader = {
             noteKey,
@@ -190,7 +210,7 @@ function EditorInner({
               try {
                 const { doc } = ctx.get(editorViewCtx).state;
                 if (reportedDoc && doc.eq(reportedDoc)) return undefined;
-                return joinFrontmatter(frontmatter, normalizeEditorImageMarkdown(getMarkdown()(ctx)));
+                return toMarkdown(ctx);
               } catch {
                 // 编辑器已经销毁
                 return undefined;
@@ -200,9 +220,9 @@ function EditorInner({
           readerRef.current = reader;
           if (pendingMarkdownRef) pendingMarkdownRef.current = reader;
         });
-        listener.markdownUpdated((ctx, markdown) => {
+        listener.markdownUpdated((ctx) => {
           reportedDoc = ctx.get(editorViewCtx).state.doc;
-          onChangeRef.current(joinFrontmatter(frontmatter, normalizeEditorImageMarkdown(markdown)));
+          onChangeRef.current(toMarkdown(ctx));
         });
       });
 
