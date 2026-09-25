@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { Crepe } from '@milkdown/crepe';
+import { editorViewCtx } from '@milkdown/kit/core';
+import type { Node as ProseNode } from '@milkdown/kit/prose/model';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { Milkdown, MilkdownProvider, useEditor, useInstance } from '@milkdown/react';
 import { useTyporaInlineCode } from '../hooks/useTyporaInlineCode';
@@ -12,6 +14,12 @@ import { joinFrontmatter, splitFrontmatter } from '../utils/frontmatter';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/classic.css';
 
+/** 同步读取编辑器里还没通过 onChange 上报的最新内容（没有则返回 undefined）；noteKey 标明它属于哪一次载入 */
+export interface PendingMarkdownReader {
+  noteKey: string;
+  read: () => string | undefined;
+}
+
 interface MarkdownEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -21,22 +29,27 @@ interface MarkdownEditorProps {
   spellCheckEnabled: boolean;
   isDark: boolean;
   typewriterMode?: boolean;
+  pendingMarkdownRef?: MutableRefObject<PendingMarkdownReader | null>;
 }
 
 function EditorInner({
   value,
   onChange,
   onReady,
+  noteKey,
   notePath,
   spellCheckEnabled,
   isDark,
   typewriterMode,
-}: Pick<MarkdownEditorProps, 'value' | 'onChange' | 'onReady' | 'notePath' | 'spellCheckEnabled' | 'isDark' | 'typewriterMode'>) {
+  pendingMarkdownRef,
+}: MarkdownEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
   const onReadyRef = useRef(onReady);
   const notePathRef = useRef(notePath);
   const isDarkRef = useRef(isDark);
+  const readerRef = useRef<PendingMarkdownReader | null>(null);
+  const disposedRef = useRef(false);
   const [loading, getEditor] = useInstance();
   // Milkdown 没有 frontmatter 节点，会把开头的 --- 解析成分隔线 + setext 标题并按正文重新序列化，
   // 所以编辑器只接管正文，frontmatter 原样保留并在输出时拼回去（在源码模式中编辑）
@@ -45,6 +58,18 @@ function EditorInner({
   onReadyRef.current = onReady;
   notePathRef.current = notePath;
   isDarkRef.current = isDark;
+
+  // Milkdown 的销毁是异步的：卸载时立即撤下自己的 reader，避免 App 读到已关闭笔记的内容
+  useEffect(() => {
+    disposedRef.current = false;
+    return () => {
+      disposedRef.current = true;
+      if (pendingMarkdownRef && pendingMarkdownRef.current === readerRef.current) {
+        pendingMarkdownRef.current = null;
+      }
+      readerRef.current = null;
+    };
+  }, [pendingMarkdownRef]);
 
   useTyporaImageSource(containerRef, getEditor, loading);
   useTyporaInlineCode(containerRef, getEditor, loading);
@@ -150,12 +175,33 @@ function EditorInner({
       });
 
       crepe.on((listener) => {
+        // 最近一次通过 onReady/onChange 上报的文档；markdownUpdated 有 200ms 防抖，编辑器销毁时还会直接取消，
+        // 所以 App 在切换、关闭、退出前要通过 pendingMarkdownRef 同步取走这之后的修改
+        let reportedDoc: ProseNode | null = null;
         // 载入笔记不会触发 markdownUpdated（它只在文档被修改后触发），所以挂载时主动把序列化后的
         // 初始内容交给 onReady；此后每一次 markdownUpdated 都是用户编辑，必须走 onChange 才会被标记为未保存
         listener.mounted((ctx) => {
+          reportedDoc = ctx.get(editorViewCtx).state.doc;
           onReadyRef.current?.(joinFrontmatter(frontmatter, normalizeEditorImageMarkdown(getMarkdown()(ctx))));
+          if (disposedRef.current) return;
+          const reader: PendingMarkdownReader = {
+            noteKey,
+            read: () => {
+              try {
+                const { doc } = ctx.get(editorViewCtx).state;
+                if (reportedDoc && doc.eq(reportedDoc)) return undefined;
+                return joinFrontmatter(frontmatter, normalizeEditorImageMarkdown(getMarkdown()(ctx)));
+              } catch {
+                // 编辑器已经销毁
+                return undefined;
+              }
+            },
+          };
+          readerRef.current = reader;
+          if (pendingMarkdownRef) pendingMarkdownRef.current = reader;
         });
-        listener.markdownUpdated((_ctx, markdown) => {
+        listener.markdownUpdated((ctx, markdown) => {
+          reportedDoc = ctx.get(editorViewCtx).state.doc;
           onChangeRef.current(joinFrontmatter(frontmatter, normalizeEditorImageMarkdown(markdown)));
         });
       });
@@ -177,17 +223,19 @@ function EditorInner({
   );
 }
 
-export function MarkdownEditor({ value, onChange, onReady, noteKey, notePath, spellCheckEnabled, isDark, typewriterMode = false }: MarkdownEditorProps) {
+export function MarkdownEditor({ value, onChange, onReady, noteKey, notePath, spellCheckEnabled, isDark, typewriterMode = false, pendingMarkdownRef }: MarkdownEditorProps) {
   return (
     <MilkdownProvider key={noteKey}>
       <EditorInner
         value={value}
         onChange={onChange}
         onReady={onReady}
+        noteKey={noteKey}
         notePath={notePath}
         spellCheckEnabled={spellCheckEnabled}
         isDark={isDark}
         typewriterMode={typewriterMode}
+        pendingMarkdownRef={pendingMarkdownRef}
       />
     </MilkdownProvider>
   );

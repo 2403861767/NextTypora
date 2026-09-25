@@ -56,7 +56,7 @@ import { FileTree } from './components/FileTree';
 import type { FileTreeSortMode } from './components/FileTree';
 import { EditorTabs } from './components/EditorTabs';
 import { FileList } from './components/FileList';
-import { MarkdownEditor } from './components/MarkdownEditor';
+import { MarkdownEditor, type PendingMarkdownReader } from './components/MarkdownEditor';
 import { MarkdownHelpModal } from './components/MarkdownHelpModal';
 import { Outline } from './components/Outline';
 import { QuickOpenModal } from './components/QuickOpenModal';
@@ -109,6 +109,7 @@ function useDebouncedSave(
   onSaved?: (note: Note) => void,
   onConflict?: (conflict: SaveConflict) => void,
   onFileMissing?: (path: string, content: string) => void,
+  readPendingContent?: () => string | undefined,
 ) {
   const timerRef = useRef<number>();
   const stateRef = useRef({ path, content, dirty, blocked, baseHash });
@@ -127,6 +128,13 @@ function useDebouncedSave(
     // 同一时间只发一个保存请求：并发请求带着同一个 baseHash，后到的会被误判为外部修改（如后端恢复时积压的重试）
     while (inFlightRef.current) {
       await inFlightRef.current;
+    }
+    // 编辑器可能还有没上报的输入（所见即所得编辑器每 200ms 才上报一次），先取出来一起保存
+    if (stateRef.current.path) {
+      const pending = readPendingContent?.();
+      if (pending !== undefined && pending !== stateRef.current.content) {
+        stateRef.current = { ...stateRef.current, content: pending, dirty: true };
+      }
     }
     const { path: savePath, content: saveContent, dirty: isDirty, blocked: isBlocked, baseHash: saveBaseHash } = stateRef.current;
     if (!savePath || !isDirty) return true;
@@ -163,7 +171,7 @@ function useDebouncedSave(
     } finally {
       inFlightRef.current = null;
     }
-  }, [onConflict, onSaved, onFileMissing]);
+  }, [onConflict, onSaved, onFileMissing, readPendingContent]);
 
   useEffect(() => {
     if (!dirty || blocked || discarded || !path) return;
@@ -440,6 +448,19 @@ export default function App() {
     setAlertOpen(true);
   }, []);
 
+  // 所见即所得编辑器还没上报的输入：只接受当前这次载入（路径 + editorRevision）的编辑器给出的内容
+  const editorNoteKey = `${selectedPath}:${editorRevision}`;
+  const editorNoteKeyRef = useRef(editorNoteKey);
+  editorNoteKeyRef.current = editorNoteKey;
+  const pendingMarkdownRef = useRef<PendingMarkdownReader | null>(null);
+  const readPendingEditorContent = useCallback((): string | undefined => {
+    const reader = pendingMarkdownRef.current;
+    if (!reader || reader.noteKey !== editorNoteKeyRef.current) return undefined;
+    const pending = reader.read();
+    if (pending !== undefined) setContent(pending);
+    return pending;
+  }, []);
+
   // 文件已被移动或删除时暂停自动保存，等待用户选择“另存为”或“关闭标签页”
   const selectedTabMissing = openTabs.some((tab) => tab.path === selectedPath && tab.missing);
   const { saveStatus, saveError, flush: flushSave, discard: discardSave } = useDebouncedSave(
@@ -454,6 +475,7 @@ export default function App() {
     },
     setSaveConflict,
     handleFileMissing,
+    readPendingEditorContent,
   );
 
   const canDeleteSelectedNote = Boolean(selectedPath);
@@ -613,9 +635,7 @@ export default function App() {
     let activeFlushed = false;
 
     for (const tab of tabsToRemove) {
-      const dirty = tab.path === selectedPath ? content !== loadedContent : tab.content !== tab.loadedContent;
-      if (!dirty) continue;
-
+      // 当前笔记总是交给 flush 判断：编辑器里可能还有没上报的输入，content 还看不出已修改
       if (tab.path === selectedPath) {
         if (!activeFlushed) {
           activeFlushed = true;
@@ -627,6 +647,7 @@ export default function App() {
         }
         continue;
       }
+      if (tab.content === tab.loadedContent) continue;
 
       try {
         await saveNote(tab.path, tab.content, tab.contentHash);
@@ -637,7 +658,7 @@ export default function App() {
     }
 
     return true;
-  }, [content, flushSave, loadedContent, selectedPath, showError]);
+  }, [flushSave, selectedPath, showError]);
 
   const syncTabsAfterPathChange = useCallback((target: TreeSelection, newTargetPath: string) => {
     setOpenTabs((prev) => {
@@ -1071,7 +1092,8 @@ export default function App() {
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (selectedPath && content !== loadedContent) {
+      // 刚输入的内容可能还在编辑器里没上报，也算未保存
+      if (selectedPath && (content !== loadedContent || readPendingEditorContent() !== undefined)) {
         void flushSave();
         event.preventDefault();
         event.returnValue = '';
@@ -1079,7 +1101,7 @@ export default function App() {
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [selectedPath, content, loadedContent, flushSave]);
+  }, [selectedPath, content, loadedContent, flushSave, readPendingEditorContent]);
 
   useEffect(() => {
     if (!selectedPath) return;
@@ -2316,7 +2338,8 @@ export default function App() {
                 ) : (
                   <motion.div key="wysiwyg" className="editor-mode-motion" {...editorCrossfadeMotion}>
                   <MarkdownEditor
-                    noteKey={`${selectedPath}:${editorRevision}`}
+                    noteKey={editorNoteKey}
+                    pendingMarkdownRef={pendingMarkdownRef}
                     notePath={selectedPath}
                     value={content}
                     onChange={setContent}

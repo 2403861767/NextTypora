@@ -34,6 +34,43 @@ describe('MarkdownEditor', () => {
     expect(onReady).toHaveBeenCalledTimes(1);
   });
 
+  // BUG_BACKLOG_REAL_WORLD.md RW-P1-001：markdownUpdated 有 200ms 防抖，切换/关闭前 App 需要能同步取到尚未上报的修改
+  it('exposes edits that are still inside the change debounce through pendingMarkdownRef', async () => {
+    const pendingMarkdownRef: Parameters<typeof MarkdownEditor>[0]['pendingMarkdownRef'] = { current: null };
+    const onReady = vi.fn();
+    const onChange = vi.fn();
+    const { container, unmount } = render(
+      <MarkdownEditor
+        value={'# 标题\n\n第一段正文'}
+        onChange={onChange}
+        onReady={onReady}
+        noteKey="note.md:3"
+        notePath="note.md"
+        spellCheckEnabled={false}
+        isDark={false}
+        pendingMarkdownRef={pendingMarkdownRef}
+      />,
+    );
+    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    expect(pendingMarkdownRef?.current?.noteKey).toBe('note.md:3');
+    expect(pendingMarkdownRef?.current?.read()).toBeUndefined();
+
+    const text = container.querySelector('.ProseMirror p')?.firstChild as Text;
+    text.data += '，追加内容';
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // 还没有通过 onChange 上报，但已经能同步读到
+    expect(onChange).not.toHaveBeenCalled();
+    expect(pendingMarkdownRef?.current?.read()).toContain('第一段正文，追加内容');
+
+    // 上报之后就没有“未上报”的内容了
+    await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
+    expect(pendingMarkdownRef?.current?.read()).toBeUndefined();
+
+    unmount();
+    expect(pendingMarkdownRef?.current).toBeNull();
+  });
+
   describe('YAML frontmatter', () => {
     // BUG_BACKLOG_REAL_WORLD.md RW-P0-003 中的 读书笔记/frontmatter.md
     const FRONTMATTER = '---\ntitle: 人月神话读书笔记\ntags: [读书, 软件工程]\nauthor: Brooks\n---\n\n';

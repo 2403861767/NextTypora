@@ -190,6 +190,55 @@ describe('App (integration with mocked backend)', () => {
     expect(tabTitles()).toEqual(['a.md']);
   }, 20000);
 
+  // BUG_BACKLOG_REAL_WORLD.md RW-P1-001：编辑器每 200ms 才上报一次修改，输入后立刻切换/关闭/刷新会丢掉最后输入的内容
+  describe('acting within ~200ms of typing', () => {
+    const NOTE_A = 'a.md';
+    const NOTE_B = 'b.md';
+
+    async function openAndTypeQuickly(typed: string) {
+      await openApp({ [NOTE_A]: '# A\n\n第一段\n', [NOTE_B]: '# B\n\n另一篇\n' }, [NOTE_A, NOTE_B]);
+      typeAtEndOfParagraph('第一段', typed);
+      // 让 ProseMirror 读到这次 DOM 改动（MutationObserver），但仍在编辑器 200ms 的上报防抖之内
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    function savedContentsOf(path: string): string[] {
+      return vi.mocked(api.saveNote).mock.calls.filter(([savePath]) => savePath === path).map(([, content]) => content);
+    }
+
+    it('switching tabs saves the last keystrokes of the previous note', async () => {
+      await openAndTypeQuickly(' QUICK1');
+
+      fireEvent.click(editorTabs().find((tab) => tab.getAttribute('title') === NOTE_B)!);
+
+      await waitFor(() => expect(disk.get(NOTE_A)).toBe('# A\n\n第一段 QUICK1\n'), { timeout: 3000 });
+      await waitFor(() => expect(editorText()).toContain('另一篇'), { timeout: 3000 });
+      // 最后的输入只能写进它所属的笔记
+      expect(savedContentsOf(NOTE_B)).toEqual([]);
+      expect(disk.get(NOTE_B)).toBe('# B\n\n另一篇\n');
+    }, 20000);
+
+    it('Ctrl+W saves the last keystrokes before closing the tab', async () => {
+      await openAndTypeQuickly(' CTRLW1');
+
+      pressShortcut('w');
+
+      await waitFor(() => expect(disk.get(NOTE_A)).toBe('# A\n\n第一段 CTRLW1\n'), { timeout: 3000 });
+      await waitFor(() => expect(tabPaths()).toEqual([NOTE_B]), { timeout: 5000 });
+      expect(savedContentsOf(NOTE_B)).toEqual([]);
+    }, 20000);
+
+    it('closing or reloading the window (beforeunload) asks to stay and saves the last keystrokes', async () => {
+      await openAndTypeQuickly(' RELOAD2');
+
+      const event = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+      await waitFor(() => expect(disk.get(NOTE_A)).toBe('# A\n\n第一段 RELOAD2\n'), { timeout: 3000 });
+    }, 20000);
+  });
+
   // BUG_BACKLOG_REAL_WORLD.md RW-P1-004：“检测到外部修改”对话框打开时，关闭/切换标签会丢掉未保存的修改
   describe('while the "检测到外部修改" dialog is open', () => {
     const NOTE_B = '日记/笔记B.md';
