@@ -221,9 +221,9 @@ describe('MarkdownEditor', () => {
       return { ...view, onReady, onChange };
     }
 
-    /** 在文本以 startsWith 开头的段落末尾输入（改的是段落最后一个文本节点） */
-    function typeAtEndOf(container: HTMLElement, startsWith: string, typed: string) {
-      const paragraph = Array.from(container.querySelectorAll('.ProseMirror p'))
+    /** 在文本以 startsWith 开头的段落（或 selector 指定的块）末尾输入（改的是最后一个文本节点） */
+    function typeAtEndOf(container: HTMLElement, startsWith: string, typed: string, selector = 'p') {
+      const paragraph = Array.from(container.querySelectorAll(`.ProseMirror ${selector}`))
         .find((element) => element.textContent?.startsWith(startsWith));
       const text = paragraph?.lastChild;
       expect(text?.nodeType).toBe(Node.TEXT_NODE);
@@ -266,6 +266,103 @@ describe('MarkdownEditor', () => {
 
       await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
       expect(onChange.mock.calls.at(-1)?.[0]).toMatch(/^([-*+]) a\n\n(?!\1)[-*+] b X\n$/);
+    });
+
+    // 打包版复测（test/p1-verify-evidence/REPORT.md）发现：被编辑的块本身仍会按 Milkdown 的规范格式整块重写
+    describe('the edited block keeps its own formatting', () => {
+      const READING_NOTES = [
+        '# 《人月神话》读书笔记',
+        '',
+        '## 关键观点',
+        '',
+        '* 没有银弹',
+        '* 向进度落后的项目增加人手，只会让它更加落后',
+        '    * 沟通成本随人数平方增长',
+        '    * 新人需要培训时间',
+        '* 概念完整性最重要',
+        '',
+        '+ 外科手术队伍',
+        '',
+      ].join('\n');
+      const MEETING_CRLF = [
+        '# 会议纪要 2026-09-25',
+        '',
+        '参会：张三、李四、王五',
+        '',
+        '| 议题 | 负责人 | 截止 |',
+        '|:-----|:------:|-----:|',
+        '| 打包验证 | 张三 | 9/26 |',
+        '',
+        '- 先修 P1',
+        '- 再修 P2',
+        '',
+      ].join('\r\n');
+      const TECH_DOC = [
+        '# 同步服务设计',
+        '',
+        '注意事项见[设计文档][design]和脚注[^1]。',
+        '',
+        '需要修改的一行说明。',
+        '',
+        '***',
+        '',
+        '[design]: https://example.com/design "设计文档"',
+        '[^1]: 这是脚注内容。',
+        '',
+      ].join('\n');
+      const CONTACTS = ['# 通讯录', '', '地址：上海市浦东新区  ', '电话：021-12345678', '', '- 备注', ''].join('\n');
+      const SETEXT = ['项目总览', '========', '', '第一章', '------', '', '正文内容。', ''].join('\n');
+      const TABLE = [
+        '| 议题 | 负责人 | 截止 |',
+        '|:-----|:------:|-----:|',
+        '| 打包验证 | 张三 | 9/26 |',
+        '| 文档更新 | 李四 | 9/30 |',
+        '',
+      ].join('\n');
+
+      async function editAndSave(value: string, key: string, startsWith: string, typed: string, selector?: string) {
+        const { container, onReady, onChange } = renderNote(value, key);
+        await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1), { timeout: 5000 });
+        expect(onReady.mock.calls[0][0]).toBe(value);
+        typeAtEndOf(container, startsWith, typed, selector);
+        await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
+        return onChange.mock.calls.at(-1)?.[0] as string;
+      }
+
+      it('editing one item of a "*" list with 4-space sub-items changes only that line', async () => {
+        const saved = await editAndSave(READING_NOTES, 'reading:item', '没有银弹', ' EDIT2');
+        expect(saved).toBe(READING_NOTES.replace('* 没有银弹', '* 没有银弹 EDIT2'));
+      });
+
+      it('editing a nested item changes only that line', async () => {
+        const saved = await editAndSave(READING_NOTES, 'reading:nested', '新人需要培训时间', ' N');
+        expect(saved).toBe(READING_NOTES.replace('    * 新人需要培训时间', '    * 新人需要培训时间 N'));
+      });
+
+      it('keeps CRLF line endings everywhere when a paragraph of a CRLF note is edited', async () => {
+        const saved = await editAndSave(MEETING_CRLF, 'meeting:crlf', '参会：', ' EDIT3');
+        expect(saved).toBe(MEETING_CRLF.replace('王五', '王五 EDIT3'));
+      });
+
+      it('leaves an untouched reference-style link paragraph alone', async () => {
+        const saved = await editAndSave(TECH_DOC, 'tech:ref', '需要修改的一行说明', ' EDIT4');
+        expect(saved).toBe(TECH_DOC.replace('需要修改的一行说明。', '需要修改的一行说明。 EDIT4'));
+      });
+
+      it('keeps a two-space hard break inside the edited paragraph', async () => {
+        const saved = await editAndSave(CONTACTS, 'contacts:hb', '地址：', ' EDIT5');
+        expect(saved).toBe(CONTACTS.replace('021-12345678', '021-12345678 EDIT5'));
+      });
+
+      it('keeps an edited setext heading in setext style', async () => {
+        const saved = await editAndSave(SETEXT, 'setext:h2', '第一章', ' EDIT6', 'h2');
+        expect(saved).toBe(SETEXT.replace('第一章', '第一章 EDIT6'));
+      });
+
+      it('editing a table cell changes only that row', async () => {
+        const saved = await editAndSave(TABLE, 'table:cell', '打包验证', ' X');
+        expect(saved).toBe(TABLE.replace('| 打包验证 | 张三 | 9/26 |', '| 打包验证 X | 张三 | 9/26 |'));
+      });
     });
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { Crepe } from '@milkdown/crepe';
-import { editorViewCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
+import { editorViewCtx } from '@milkdown/kit/core';
 import type { Ctx } from '@milkdown/kit/ctx';
 import type { Node as ProseNode } from '@milkdown/kit/prose/model';
 import { getMarkdown } from '@milkdown/kit/utils';
@@ -12,7 +12,7 @@ import { proxyImageUrl } from '../utils/assets';
 import { uploadEditorImage } from '../utils/imageUpload';
 import { normalizeEditorImageMarkdown } from '../utils/markdownImages';
 import { joinFrontmatter, splitFrontmatter } from '../utils/frontmatter';
-import { createMarkdownBlockPreserver, joinListsBySpread, type MarkdownBlockPreserver } from '../utils/preserveMarkdownBlocks';
+import { configureMarkdownStringify, createMarkdownBlockPreserver, type HardBreakStyle, type MarkdownBlockPreserver } from '../utils/preserveMarkdownBlocks';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/classic.css';
 
@@ -177,14 +177,10 @@ function EditorInner({
         },
       });
 
-      // 重新序列化改动过的块时：紧凑列表保持紧凑（修正 Milkdown 字符串 spread），无序列表用最常见的 "-"
-      crepe.editor.config((ctx) => {
-        ctx.update(remarkStringifyOptionsCtx, (options) => ({
-          ...options,
-          bullet: '-' as const,
-          join: [...(options.join ?? []), joinListsBySpread],
-        }));
-      });
+      // 重新序列化改动过的内容时：紧凑列表保持紧凑（修正 Milkdown 字符串 spread），无序列表用最常见的 "-"，
+      // 硬换行沿用这篇文档原来的写法（载入后由 preserver 检测）
+      let hardBreakStyle: HardBreakStyle = 'backslash';
+      crepe.editor.config((ctx) => configureMarkdownStringify(ctx, () => hardBreakStyle));
 
       crepe.on((listener) => {
         // 最近一次通过 onReady/onChange 上报的文档；markdownUpdated 有 200ms 防抖，编辑器销毁时还会直接取消，
@@ -202,6 +198,7 @@ function EditorInner({
         listener.mounted((ctx) => {
           reportedDoc = ctx.get(editorViewCtx).state.doc;
           preserver = createMarkdownBlockPreserver(ctx, body, reportedDoc, normalizeEditorImageMarkdown);
+          hardBreakStyle = preserver.hardBreakStyle;
           onReadyRef.current?.(toMarkdown(ctx));
           if (disposedRef.current) return;
           const reader: PendingMarkdownReader = {
