@@ -103,19 +103,20 @@ interface MoveDialogState {
 function useDebouncedSave(
   path: string,
   content: string,
-  enabled: boolean,
+  dirty: boolean,
+  blocked: boolean,
   baseHash?: string,
   onSaved?: (note: Note) => void,
   onConflict?: (conflict: SaveConflict) => void,
   onFileMissing?: (path: string) => void,
 ) {
   const timerRef = useRef<number>();
-  const stateRef = useRef({ path, content, enabled, baseHash });
+  const stateRef = useRef({ path, content, dirty, blocked, baseHash });
   const inFlightRef = useRef<Promise<unknown> | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState('');
 
-  stateRef.current = { path, content, enabled, baseHash };
+  stateRef.current = { path, content, dirty, blocked, baseHash };
 
   const flush = useCallback(async (): Promise<boolean> => {
     window.clearTimeout(timerRef.current);
@@ -123,8 +124,10 @@ function useDebouncedSave(
     while (inFlightRef.current) {
       await inFlightRef.current;
     }
-    const { path: savePath, content: saveContent, enabled: dirty, baseHash: saveBaseHash } = stateRef.current;
-    if (!savePath || !dirty) return true;
+    const { path: savePath, content: saveContent, dirty: isDirty, blocked: isBlocked, baseHash: saveBaseHash } = stateRef.current;
+    if (!savePath || !isDirty) return true;
+    // 有未保存的修改但暂时不能保存（如未处理的外部修改冲突）：不能当作“已保存”，否则调用方会关闭/切换并丢掉修改
+    if (isBlocked) return false;
 
     setSaveStatus('saving');
     const request = saveNote(savePath, saveContent, saveBaseHash);
@@ -136,7 +139,7 @@ function useDebouncedSave(
         stateRef.current = {
           ...stateRef.current,
           baseHash: note.contentHash,
-          enabled: stateRef.current.enabled && stateRef.current.content !== saveContent,
+          dirty: stateRef.current.dirty && stateRef.current.content !== saveContent,
         };
       }
       setSaveStatus('saved');
@@ -159,7 +162,7 @@ function useDebouncedSave(
   }, [onConflict, onSaved, onFileMissing]);
 
   useEffect(() => {
-    if (!enabled || !path) return;
+    if (!dirty || blocked || !path) return;
 
     window.clearTimeout(timerRef.current);
     setSaveStatus('idle');
@@ -169,7 +172,7 @@ function useDebouncedSave(
     }, 800);
 
     return () => window.clearTimeout(timerRef.current);
-  }, [path, content, enabled, flush]);
+  }, [path, content, dirty, blocked, flush]);
 
   return { saveStatus, saveError, flush };
 }
@@ -429,7 +432,8 @@ export default function App() {
   const { saveStatus, saveError, flush: flushSave } = useDebouncedSave(
     selectedPath,
     content,
-    ready && !saveConflict && content !== loadedContent,
+    ready && content !== loadedContent,
+    Boolean(saveConflict),
     contentHash,
     (note) => {
       setLoadedContent(note.content);
@@ -1778,6 +1782,8 @@ export default function App() {
         patchWritingModes({ distractionFreeMode: false });
         return;
       }
+      // 冲突对话框打开期间屏蔽全局快捷键：关闭/切换标签等操作不能在对话框背后发生
+      if (saveConflict) return;
 
       const action = findShortcutAction(shortcutBindings, event);
       if (!action) return;
@@ -1837,6 +1843,7 @@ export default function App() {
     handleNextTab,
     patchWritingModes,
     activeTabPath,
+    saveConflict,
     selectedPath,
     setFindOpen,
     shortcutBindings,
