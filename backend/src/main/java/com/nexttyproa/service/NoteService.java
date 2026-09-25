@@ -55,6 +55,11 @@ public class NoteService {
         lock.lock();
         try {
             Path file = fileService.resolveSafe(vaultRoot, relativePath);
+            // 带 baseHash 说明编辑器打开的是一个已存在的文件：它已在外部被删除或重命名时不能静默重建（force=true 除外）
+            if (!fileService.exists(file) && !request.isForce()
+                    && request.getBaseHash() != null && !request.getBaseHash().isBlank()) {
+                throw new NotFoundException("Note was moved or deleted outside NextTyproa: " + relativePath);
+            }
             String nextContent = request.getContent() == null ? "" : request.getContent();
             FileService.ReadFileResult currentRead = fileService.exists(file)
                     ? fileService.readFileWithEncoding(file)

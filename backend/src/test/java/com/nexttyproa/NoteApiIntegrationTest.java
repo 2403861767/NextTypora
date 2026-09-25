@@ -479,6 +479,41 @@ class NoteApiIntegrationTest {
                 .andExpect(jsonPath("$.content").value("# Conflict\n\nnext"));
     }
 
+    // RW-P1-003：前端只有收到 404 才会弹出“文件已被移动或删除”，不能把外部删除的文件重新写回磁盘
+    @Test
+    void saveAfterExternalDeleteReturnsNotFoundInsteadOfRecreatingTheFile() throws Exception {
+        configureWorkspace();
+
+        CreateNoteRequest createRequest = new CreateNoteRequest();
+        createRequest.setPath("deleted.md");
+        createRequest.setContent("# Deleted\n\noriginal");
+
+        String createBody = mockMvc.perform(post("/api/note")
+                        .header("X-Auth-Token", TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createRequest)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        String baseHash = objectMapper.readTree(createBody).get("contentHash").asText();
+        Files.delete(tempVault.resolve("deleted.md"));
+
+        SaveNoteRequest save = new SaveNoteRequest();
+        save.setPath("deleted.md");
+        save.setContent("# Deleted\n\noriginal AFTER-EXTERNAL-DELETE");
+        save.setBaseHash(baseHash);
+
+        mockMvc.perform(put("/api/note")
+                        .header("X-Auth-Token", TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(save)))
+                .andExpect(status().isNotFound());
+
+        assertThat(tempVault.resolve("deleted.md")).doesNotExist();
+    }
+
     @Test
     void markdownExtensionIsSupportedEverywhere() throws Exception {
         configureWorkspace();

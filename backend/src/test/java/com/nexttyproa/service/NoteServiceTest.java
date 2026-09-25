@@ -93,6 +93,44 @@ class NoteServiceTest {
         assertTrue(backupContents(vaultRoot.resolve("new"), "中文笔记.md").isEmpty());
     }
 
+    // BUG_BACKLOG_REAL_WORLD.md RW-P1-003：编辑器带着 baseHash 保存，说明它编辑的是一个已存在的文件；
+    // 文件在外部被删除/重命名后不能被悄悄重建，必须返回“不存在”，由前端提示“文件已被移动或删除”
+    @Test
+    void saveAfterExternalDeleteIsRejectedAndDoesNotRecreateTheFile(@TempDir Path vaultRoot) throws Exception {
+        NoteService noteService = noteService(vaultRoot);
+        NoteDto opened = noteService.createNote(createRequest("日记/笔记A.md", "# 笔记A\n原文"));
+        Files.delete(vaultRoot.resolve("日记/笔记A.md"));
+
+        assertThrows(NotFoundException.class,
+                () -> noteService.saveNote(saveRequest("日记/笔记A.md", "# 笔记A\n原文AFTER-EXTERNAL-DELETE", opened.getContentHash(), false)));
+
+        assertFalse(Files.exists(vaultRoot.resolve("日记/笔记A.md")));
+    }
+
+    @Test
+    void saveAfterExternalRenameIsRejectedAndDoesNotCreateADuplicate(@TempDir Path vaultRoot) throws Exception {
+        NoteService noteService = noteService(vaultRoot);
+        NoteDto opened = noteService.createNote(createRequest("日记/笔记A.md", "# 笔记A\n原文"));
+        Files.move(vaultRoot.resolve("日记/笔记A.md"), vaultRoot.resolve("日记/笔记B.md"));
+
+        assertThrows(NotFoundException.class,
+                () -> noteService.saveNote(saveRequest("日记/笔记A.md", "# 笔记A\n原文 +RENAME", opened.getContentHash(), false)));
+
+        assertFalse(Files.exists(vaultRoot.resolve("日记/笔记A.md")));
+        assertEquals("# 笔记A\n原文", Files.readString(vaultRoot.resolve("日记/笔记B.md")));
+    }
+
+    @Test
+    void forceSaveToExternallyDeletedFileStillWritesIt(@TempDir Path vaultRoot) throws Exception {
+        NoteService noteService = noteService(vaultRoot);
+        NoteDto opened = noteService.createNote(createRequest("note.md", "original"));
+        Files.delete(vaultRoot.resolve("note.md"));
+
+        noteService.saveNote(saveRequest("note.md", "forced", opened.getContentHash(), true));
+
+        assertEquals("forced", Files.readString(vaultRoot.resolve("note.md")));
+    }
+
     @Test
     void savePreservesDetectedGbkEncoding(@TempDir Path vaultRoot) throws Exception {
         Charset gbk = Charset.forName("GBK");

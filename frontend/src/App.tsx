@@ -108,15 +108,19 @@ function useDebouncedSave(
   baseHash?: string,
   onSaved?: (note: Note) => void,
   onConflict?: (conflict: SaveConflict) => void,
-  onFileMissing?: (path: string) => void,
+  onFileMissing?: (path: string, content: string) => void,
 ) {
   const timerRef = useRef<number>();
   const stateRef = useRef({ path, content, dirty, blocked, baseHash });
   const inFlightRef = useRef<Promise<unknown> | null>(null);
+  // 被 discard() 放弃的笔记：切换到其他笔记之前都不再为它保存（关闭标签页与载入下一篇之间还会重新渲染）
+  const discardedPathRef = useRef('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState('');
 
-  stateRef.current = { path, content, dirty, blocked, baseHash };
+  if (discardedPathRef.current && discardedPathRef.current !== path) discardedPathRef.current = '';
+  const discarded = Boolean(path) && discardedPathRef.current === path;
+  stateRef.current = { path: discarded ? '' : path, content, dirty: dirty && !discarded, blocked, baseHash };
 
   const flush = useCallback(async (): Promise<boolean> => {
     window.clearTimeout(timerRef.current);
@@ -151,7 +155,7 @@ function useDebouncedSave(
         onConflict?.(toSaveConflict(error));
       } else if (error instanceof ApiError && error.status === 404) {
         // 文件已被移动或删除
-        onFileMissing?.(savePath);
+        onFileMissing?.(savePath, saveContent);
       }
       setSaveError(describeError(error, '保存失败'));
       setSaveStatus('error');
@@ -162,7 +166,7 @@ function useDebouncedSave(
   }, [onConflict, onSaved, onFileMissing]);
 
   useEffect(() => {
-    if (!dirty || blocked || !path) return;
+    if (!dirty || blocked || discarded || !path) return;
 
     window.clearTimeout(timerRef.current);
     setSaveStatus('idle');
@@ -172,9 +176,16 @@ function useDebouncedSave(
     }, 800);
 
     return () => window.clearTimeout(timerRef.current);
-  }, [path, content, dirty, blocked, flush]);
+  }, [path, content, dirty, blocked, discarded, flush]);
 
-  return { saveStatus, saveError, flush };
+  // 用户明确放弃当前无法保存的修改（如文件已被外部删除）：解除保存目标，之后的 flush 视为无需保存
+  const discard = useCallback(() => {
+    window.clearTimeout(timerRef.current);
+    discardedPathRef.current = stateRef.current.path;
+    stateRef.current = { ...stateRef.current, path: '', dirty: false };
+  }, []);
+
+  return { saveStatus, saveError, flush, discard };
 }
 
 interface SaveConflict {
@@ -413,7 +424,7 @@ export default function App() {
   const pendingOpenPathRef = useRef<string | null>(null);
   const toolbarSearchInputRef = useRef<InputRef | null>(null);
 
-  const handleFileMissing = useCallback((missingPath: string) => {
+  const handleFileMissing = useCallback((missingPath: string, missingContent: string) => {
     // 标记该 tab 为 missing
     setOpenTabs((prev) => prev.map((tab) => (
       tab.path === missingPath
@@ -421,19 +432,21 @@ export default function App() {
         : tab
     )));
 
-    // 弹出对话框
-    setFileMissingDialog({ path: missingPath, content });
+    // 弹出对话框，保留这次没能保存的内容，供“另存为”使用
+    setFileMissingDialog({ path: missingPath, content: missingContent });
 
     // 显示错误消息
     setAlertMessage(`文件 ${missingPath} 已被移动或删除`);
     setAlertOpen(true);
-  }, [content]);
+  }, []);
 
-  const { saveStatus, saveError, flush: flushSave } = useDebouncedSave(
+  // 文件已被移动或删除时暂停自动保存，等待用户选择“另存为”或“关闭标签页”
+  const selectedTabMissing = openTabs.some((tab) => tab.path === selectedPath && tab.missing);
+  const { saveStatus, saveError, flush: flushSave, discard: discardSave } = useDebouncedSave(
     selectedPath,
     content,
     ready && content !== loadedContent,
-    Boolean(saveConflict),
+    Boolean(saveConflict) || selectedTabMissing,
     contentHash,
     (note) => {
       setLoadedContent(note.content);
@@ -1363,13 +1376,17 @@ export default function App() {
     }
   }, [clearMarkdownState, markEditorTabMissing, openNoteAt, showError, workspacePath]);
 
-  const handleCloseTab = useCallback(async (path: string) => {
+  const handleCloseTab = useCallback(async (path: string, options?: { discardChanges?: boolean }) => {
     const currentTabs = openTabs;
     const tabIndex = currentTabs.findIndex((tab) => tab.path === path);
     if (tabIndex < 0) return;
 
-    const saved = await saveTabsBeforeRemoving([currentTabs[tabIndex]]);
-    if (!saved) return;
+    if (options?.discardChanges) {
+      if (path === selectedPath) discardSave();
+    } else {
+      const saved = await saveTabsBeforeRemoving([currentTabs[tabIndex]]);
+      if (!saved) return;
+    }
 
     const nextTabs = closeEditorTab(currentTabs, path);
     const closingActive = path === selectedPath || path === activeTabPath;
@@ -1396,7 +1413,7 @@ export default function App() {
     clearCurrentDocumentState();
     await clearLastOpenedFile();
     void patchStoredAppSettings({ openTabs: [], activeTabPath: undefined }).catch(() => undefined);
-  }, [activeTabPath, clearCurrentDocumentState, clearLastOpenedFile, handleSelectTab, openTabs, saveTabsBeforeRemoving, selectedPath]);
+  }, [activeTabPath, clearCurrentDocumentState, clearLastOpenedFile, discardSave, handleSelectTab, openTabs, saveTabsBeforeRemoving, selectedPath]);
 
   const handleCloseOtherTabs = useCallback(async (path: string) => {
     const kept = openTabs.filter((tab) => tab.path === path);
@@ -1574,12 +1591,16 @@ export default function App() {
       messageApi.warning(nameError);
       return;
     }
+    // 从“文件已被移动或删除”对话框触发的另存为：原文件已不存在，不能再先保存它
+    const missingSaveAs = createDialog.kind === 'markdown' ? fileMissingDialog : null;
     setCreateDialog(null);
     try {
-      const saved = await flushSave();
-      if (!saved) {
-        showError('保存失败，无法新建文件');
-        return;
+      if (!missingSaveAs) {
+        const saved = await flushSave();
+        if (!saved) {
+          showError('保存失败，无法新建文件');
+          return;
+        }
       }
 
       if (createDialog.kind === 'folder') {
@@ -1594,14 +1615,14 @@ export default function App() {
 
       const targetPath = resolveCreatePath(markdownName(rawName), createDialog.parentPath);
       // 如果是从文件缺失对话框触发的另存为，使用保存的内容
-      const contentToSave = fileMissingDialog?.content || '# 新笔记\n\n';
+      const contentToSave = missingSaveAs ? missingSaveAs.content : '# 新笔记\n\n';
       const note = await createNote(targetPath, contentToSave);
       await refreshTree();
       messageApi.success('创建成功');
 
-      // 如果是从文件缺失对话框触发的，关闭旧标签页
-      if (fileMissingDialog) {
-        await handleCloseTab(fileMissingDialog.path);
+      // 如果是从文件缺失对话框触发的，关闭旧标签页（内容已写入新文件，旧标签的修改直接放弃）
+      if (missingSaveAs) {
+        await handleCloseTab(missingSaveAs.path, { discardChanges: true });
         setFileMissingDialog(null);
       }
 
@@ -1782,8 +1803,8 @@ export default function App() {
         patchWritingModes({ distractionFreeMode: false });
         return;
       }
-      // 冲突对话框打开期间屏蔽全局快捷键：关闭/切换标签等操作不能在对话框背后发生
-      if (saveConflict) return;
+      // 冲突/文件缺失对话框打开期间屏蔽全局快捷键：关闭/切换标签等操作不能在对话框背后发生
+      if (saveConflict || fileMissingDialog) return;
 
       const action = findShortcutAction(shortcutBindings, event);
       if (!action) return;
@@ -1843,6 +1864,7 @@ export default function App() {
     handleNextTab,
     patchWritingModes,
     activeTabPath,
+    fileMissingDialog,
     saveConflict,
     selectedPath,
     setFindOpen,
@@ -2488,20 +2510,24 @@ export default function App() {
 
         <Modal
           title="文件已被移动或删除"
-          open={Boolean(fileMissingDialog)}
+          // 另存为对话框打开期间先隐藏；取消另存为会回到这里，用户仍需二选一
+          open={Boolean(fileMissingDialog) && !createDialog}
+          // 只能通过两个按钮做选择：Esc、右上角关闭或点遮罩都会触发 onCancel，从而静默放弃修改
+          closable={false}
+          keyboard={false}
+          mask={{ closable: false }}
           onOk={() => {
             if (fileMissingDialog) {
-              // 打开另存为对话框
+              // 打开另存为对话框（保留 fileMissingDialog，submitCreate 需要它的内容）
               const suggestedName = fileMissingDialog.path.split('/').pop() || 'untitled.md';
               setCreateName(suggestedName);
               setCreateDialog({ kind: 'markdown', parentPath: '' });
-              setFileMissingDialog(null);
             }
           }}
           onCancel={() => {
             if (fileMissingDialog) {
-              // 关闭该标签页
-              void handleCloseTab(fileMissingDialog.path);
+              // 关闭该标签页，放弃无法保存的修改
+              void handleCloseTab(fileMissingDialog.path, { discardChanges: true });
               setFileMissingDialog(null);
             }
           }}

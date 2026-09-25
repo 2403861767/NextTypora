@@ -82,7 +82,7 @@ const api = await import('./api');
 const { default: App } = await import('./App');
 
 beforeAll(() => {
-  // jsdom 没有这两个浏览器 API：App 的侧栏/动效与 Crepe 的代码块组件会用到
+  // jsdom 缺少以下浏览器 API：App 的侧栏/动效与 Crepe 的编辑器组件会用到
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     value: (query: string) => ({
@@ -96,6 +96,12 @@ beforeAll(() => {
       dispatchEvent: () => false,
     }),
   });
+  // jsdom 的 Range 没有布局信息；Crepe 的虚拟光标在 selectionchange 时会读取它（如对话框输入框获得焦点）
+  if (!Range.prototype.getClientRects) {
+    const emptyRect = { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}) };
+    Range.prototype.getClientRects = () => Object.assign([], { item: () => null }) as unknown as DOMRectList;
+    Range.prototype.getBoundingClientRect = () => emptyRect as DOMRect;
+  }
   if (!('IntersectionObserver' in window)) {
     Object.defineProperty(window, 'IntersectionObserver', {
       configurable: true,
@@ -158,11 +164,19 @@ function tabTitles(): string[] {
   return editorTabs().map((tab) => tab.querySelector('.editor-tab-title')?.textContent ?? '');
 }
 
+function tabPaths(): string[] {
+  return editorTabs().map((tab) => (tab.getAttribute('title') ?? '').replace(/（文件缺失或无法打开）$/, ''));
+}
+
 /** jsdom 不会结束 antd 的离场动画，关闭后的对话框会停在 *-leave 状态留在 DOM 里，所以按这个状态判断是否仍打开 */
-function isDialogOpen(title: string): boolean {
-  return screen.queryAllByRole('dialog').some((dialog) => (
+function openDialog(title: string): HTMLElement | undefined {
+  return screen.queryAllByRole('dialog').find((dialog) => (
     dialog.querySelector('.ant-modal-title')?.textContent === title && !/-leave\b/.test(dialog.className)
   ));
+}
+
+function isDialogOpen(title: string): boolean {
+  return Boolean(openDialog(title));
 }
 
 function pressShortcut(key: string, init: KeyboardEventInit = {}) {
@@ -242,6 +256,86 @@ describe('App (integration with mocked backend)', () => {
 
       pressShortcut('w');
       await waitFor(() => expect(tabTitles()).toEqual(['a.md']), { timeout: 5000 });
+    }, 20000);
+  });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P1-003：笔记在外部被删除/重命名后，后端返回 404，
+  // 应提示“文件已被移动或删除”，并且“另存为”“关闭标签页”两个选项都要真正可用
+  describe('when the open note was deleted or renamed outside the app', () => {
+    const NOTE_A = '日记/笔记A.md';
+    const EDITED = '原文 AFTER-EXTERNAL-DELETE';
+
+    async function openMissing() {
+      await openApp({ [NOTE_A]: '# 笔记A\n\n原文\n', 'a.md': '# A\n\n另一篇\n' }, [NOTE_A, 'a.md']);
+      // 在资源管理器中删除文件，然后回到应用继续输入；自动保存时后端报 404
+      disk.delete(NOTE_A);
+      typeAtEndOfParagraph('原文', ' AFTER-EXTERNAL-DELETE');
+      await waitFor(() => expect(isDialogOpen('文件已被移动或删除')).toBe(true), { timeout: 5000 });
+      expect(editorText()).toContain(EDITED);
+    }
+
+    function savesOf(path: string): number {
+      return vi.mocked(api.saveNote).mock.calls.filter(([savePath]) => savePath === path).length;
+    }
+
+    function alertText(): string {
+      return openDialog('提示')?.textContent ?? '';
+    }
+
+    async function settle(ms = 1500) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    }
+
+    it('"关闭标签页" discards the unsavable edit and closes the tab without retrying the save', async () => {
+      await openMissing();
+      const savesBefore = savesOf(NOTE_A);
+
+      fireEvent.click(within(openDialog('文件已被移动或删除')!).getByRole('button', { name: '关闭标签页' }));
+      await settle();
+
+      expect(tabPaths()).toEqual(['a.md']);
+      expect(editorText()).toContain('另一篇');
+      expect(alertText()).not.toContain('保存失败');
+      expect(savesOf(NOTE_A)).toBe(savesBefore);
+      expect(disk.has(NOTE_A)).toBe(false);
+    }, 20000);
+
+    it('"另存为" writes the edited content to the new file and replaces the missing tab', async () => {
+      await openMissing();
+
+      fireEvent.click(within(openDialog('文件已被移动或删除')!).getByRole('button', { name: '另存为' }));
+      await waitFor(() => expect(isDialogOpen('新建 Markdown 文件')).toBe(true), { timeout: 5000 });
+      const createDialog = openDialog('新建 Markdown 文件')!;
+      expect(within(createDialog).getByRole('textbox')).toHaveValue('笔记A.md');
+      fireEvent.click(within(createDialog).getByRole('button', { name: /创\s*建/ }));
+
+      await waitFor(() => expect(api.createNote).toHaveBeenCalledTimes(1), { timeout: 5000 });
+      const [createdPath, createdContent] = vi.mocked(api.createNote).mock.calls[0];
+      expect(createdPath).toBe('笔记A.md');
+      expect(createdContent).toContain(EDITED);
+      expect(disk.get('笔记A.md')).toContain(EDITED);
+
+      await settle();
+      expect(tabPaths()).toEqual(['a.md', '笔记A.md']);
+      expect(editorText()).toContain(EDITED);
+      expect(alertText()).not.toContain('保存失败');
+      // 旧路径没有被自动保存悄悄重建
+      expect(disk.has(NOTE_A)).toBe(false);
+    }, 20000);
+
+    it('Esc does not dismiss the dialog and silently throw the edit away', async () => {
+      await openMissing();
+      const savesBefore = savesOf(NOTE_A);
+
+      fireEvent.keyDown(openDialog('文件已被移动或删除')!, { key: 'Escape', keyCode: 27 });
+      await settle();
+
+      expect(isDialogOpen('文件已被移动或删除')).toBe(true);
+      expect(tabPaths()).toEqual([NOTE_A, 'a.md']);
+      expect(editorText()).toContain(EDITED);
+      expect(savesOf(NOTE_A)).toBe(savesBefore);
     }, 20000);
   });
 });
