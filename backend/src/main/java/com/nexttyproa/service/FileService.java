@@ -23,6 +23,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -330,7 +331,29 @@ public class FileService {
 
     public static String extractTitle(String relativePath, String content) {
         if (content != null && !content.isBlank()) {
-            String firstLine = content.lines().findFirst().orElse("").trim();
+            Iterator<String> lines = content.lines().iterator();
+            String firstLine = lines.next().trim();
+            if ("---".equals(firstLine)) {
+                // 开头的 YAML frontmatter 不能当标题（与 IndexService/ExportService 同一规则：首行 ---，到下一行 --- 结束）：
+                // 优先用其中的 title，否则跳过它和后面的空行，按原规则取正文第一行；没有闭合的 --- 不是 frontmatter
+                String frontmatterTitle = "";
+                while (lines.hasNext()) {
+                    String line = lines.next().trim();
+                    if ("---".equals(line)) {
+                        if (!frontmatterTitle.isEmpty()) {
+                            return frontmatterTitle;
+                        }
+                        firstLine = "";
+                        while (firstLine.isEmpty() && lines.hasNext()) {
+                            firstLine = lines.next().trim();
+                        }
+                        break;
+                    }
+                    if (frontmatterTitle.isEmpty()) {
+                        frontmatterTitle = frontmatterTitleValue(line);
+                    }
+                }
+            }
             if (firstLine.startsWith("# ")) {
                 return firstLine.substring(2).trim();
             }
@@ -347,6 +370,19 @@ public class FileService {
             return fileName.substring(0, fileName.length() - 3);
         }
         return fileName;
+    }
+
+    private static String frontmatterTitleValue(String line) {
+        int separator = line.indexOf(':');
+        if (separator <= 0 || !"title".equalsIgnoreCase(line.substring(0, separator).trim())) {
+            return "";
+        }
+        String value = line.substring(separator + 1).trim();
+        if (value.length() >= 2 && ((value.startsWith("\"") && value.endsWith("\""))
+                || (value.startsWith("'") && value.endsWith("'")))) {
+            return value.substring(1, value.length() - 1).trim();
+        }
+        return value;
     }
 
     public String normalizeEncodingName(String encoding) {

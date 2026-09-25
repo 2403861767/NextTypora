@@ -325,6 +325,18 @@ class IndexServiceTest {
     }
 
     @Test
+    void frontmatterWithoutTitleFallsBackToTheBodyHeadingNotTheFence(@TempDir Path vaultRoot) throws Exception {
+        IndexService indexService = new IndexService(new FileService());
+        Files.writeString(vaultRoot.resolve("设计模式.md"),
+                "---\ntags: [读书]\nauthor: GoF\n---\n\n# 设计模式\n\n可复用面向对象软件的基础");
+        indexService.reindexVault(vaultRoot);
+
+        List<SearchResultDto> results = indexService.search("可复用");
+        assertEquals(1, results.size());
+        assertEquals("设计模式", results.get(0).getTitle());
+    }
+
+    @Test
     void indexNoteAndRemoveNoteKeepIndexInSync(@TempDir Path vaultRoot) throws Exception {
         IndexService indexService = new IndexService(new FileService());
         Files.writeString(vaultRoot.resolve("live.md"), "fresh-keyword");

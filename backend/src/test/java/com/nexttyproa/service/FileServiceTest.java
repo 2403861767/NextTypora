@@ -230,4 +230,55 @@ class FileServiceTest {
         assertEquals((byte) 0xBF, saved[2]);
         assertEquals("World", new String(saved, 3, saved.length - 3, StandardCharsets.UTF_8));
     }
+
+    @Test
+    void extractTitleNeverReturnsTheFrontmatterFence() {
+        String note = """
+                ---
+                title: 人月神话
+                tags:
+                  - 读书
+                ---
+
+                # 人月神话
+                """;
+
+        assertEquals("人月神话", FileService.extractTitle("读书笔记/人月神话.md", note));
+    }
+
+    @Test
+    void extractTitlePrefersTheFrontmatterTitleLikeSearchAndExport() {
+        assertEquals("神话与现实", FileService.extractTitle("a.md",
+                "---\ntitle: \"神话与现实\"\n---\n\n# 人月神话\n"));
+        assertEquals("代码大全（第二版）", FileService.extractTitle("a.md",
+                "---\nTitle: '代码大全（第二版）'\ntags: [读书]\n---\n\n只有正文，没有一级标题。\n"));
+    }
+
+    @Test
+    void extractTitleSkipsFrontmatterWithoutTitleAndUsesTheBody() {
+        assertEquals("设计模式", FileService.extractTitle("a.md",
+                "---\ntags: [读书]\nauthor: GoF\n---\n\n# 设计模式\n\n正文"));
+        assertEquals("正文第一段", FileService.extractTitle("a.md",
+                "---\ntags: [读书]\n---\n\n\n正文第一段\n"));
+        assertEquals("设计模式", FileService.extractTitle("a.md",
+                "---\ntitle:\n---\n# 设计模式\n"));
+        assertEquals("CRLF 标题", FileService.extractTitle("a.md",
+                "---\r\ntags: [a]\r\n---\r\n\r\n# CRLF 标题\r\n"));
+        assertEquals("空元数据", FileService.extractTitle("dir/空元数据.md",
+                "---\ntags: [a]\n---\n"));
+    }
+
+    @Test
+    void extractTitleKeepsTheExistingRulesForNotesWithoutFrontmatter() {
+        assertEquals("普通笔记标题", FileService.extractTitle("普通笔记.md", "# 普通笔记标题\n\n正文"));
+        assertEquals("没有一级标题的正文。", FileService.extractTitle("a.md", "没有一级标题的正文。\n\n## 二级标题"));
+        assertEquals("第二行才有标题", FileService.extractTitle("dir/第二行才有标题.md", "\n# 标题\n"));
+        assertEquals("空白", FileService.extractTitle("空白.md", "  \n\n"));
+        assertEquals("readme", FileService.extractTitle("docs/readme.markdown", ""));
+        assertEquals("x".repeat(80), FileService.extractTitle("a.md", "x".repeat(100)));
+        // 以分隔线开头、但没有闭合的 ---，不是 frontmatter：保持原规则
+        assertEquals("---", FileService.extractTitle("分隔线开头.md", "---\n\n分隔线之后的第一段正文。\n"));
+        // ----- 不是 frontmatter 的分隔符
+        assertEquals("-----", FileService.extractTitle("a.md", "-----\ntitle: x\n-----\n正文"));
+    }
 }

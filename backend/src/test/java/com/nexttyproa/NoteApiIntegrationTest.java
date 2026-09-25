@@ -505,6 +505,40 @@ class NoteApiIntegrationTest {
     }
 
     @Test
+    void notesWithYamlFrontmatterGetTheirRealTitleInsteadOfTheFence() throws Exception {
+        configureWorkspace();
+        Files.createDirectories(tempVault.resolve("读书笔记"));
+        Files.writeString(tempVault.resolve("读书笔记/人月神话.md"), """
+                ---
+                title: 人月神话
+                tags:
+                  - 读书
+                ---
+
+                # 人月神话
+                """);
+        Files.writeString(tempVault.resolve("读书笔记/设计模式.md"), """
+                ---
+                tags: [读书]
+                ---
+
+                # 设计模式
+                """);
+
+        mockMvc.perform(get("/api/note")
+                        .header("X-Auth-Token", TOKEN)
+                        .param("path", "读书笔记/人月神话.md"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("人月神话"));
+
+        mockMvc.perform(get("/api/note")
+                        .header("X-Auth-Token", TOKEN)
+                        .param("path", "读书笔记/设计模式.md"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("设计模式"));
+    }
+
+    @Test
     void searchIndexesMetadataScopesSortsPaginatesAndReportsStatus() throws Exception {
         configureWorkspace();
         Files.createDirectories(tempVault.resolve("projects"));
