@@ -22,3 +22,5 @@ backend/target/
 release/
 .nexttyproa-backups
 test/
+BUG_BACKLOG.md
+BUG_BACKLOG_REAL_WORLD.md
