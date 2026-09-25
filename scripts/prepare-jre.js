@@ -76,11 +76,13 @@ function buildWithJlink(javaHome, jlink) {
   fs.rmSync(jreDir, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(jreDir), { recursive: true });
 
+  // jdk.charsets provides Big5 (and other extended charsets) that FileService probes on every
+  // read of a file without a BOM; java.base on Windows only ships GBK and Shift_JIS.
   const modules = [
     'java.base', 'java.logging', 'java.sql', 'java.naming', 'java.desktop',
     'java.xml', 'java.net.http', 'java.security.jgss', 'java.security.sasl',
     'java.transaction.xa', 'java.management', 'java.instrument',
-    'jdk.unsupported', 'jdk.crypto.ec', 'jdk.localedata',
+    'jdk.unsupported', 'jdk.crypto.ec', 'jdk.localedata', 'jdk.charsets',
   ];
   const args = [
     `--module-path=${path.join(javaHome, 'jmods')}`,

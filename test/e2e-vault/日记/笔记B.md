@@ -1,0 +1,7 @@
+# 新笔记
+
+AFTER-EXTERNAL-DELETE RECREATED-AGAIN
+
+外部追加
+
+外部追加2
