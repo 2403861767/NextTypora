@@ -107,6 +107,7 @@ const SETTINGS_FIELDS = {
     ['id', 'path', 'title'],
   )),
   activeTabPath: pathString,
+  openTabsWorkspace: absolutePath,
   writingModes: shape({ focusMode: boolean, typewriterMode: boolean, distractionFreeMode: boolean }),
 };
 

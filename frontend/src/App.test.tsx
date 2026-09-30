@@ -3,7 +3,41 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import type { Note, TreeNode } from './types';
 
 // 用内存中的“磁盘”替代后端：App 通过 ./api 读写笔记，其余逻辑（自动保存、标签页、对话框、编辑器）都是真实的
+// disk 是主工作区 D:/vault 中的文件（相对路径）；其他目录中的文件放在 backend.external（绝对路径，/ 分隔）
 const disk = vi.hoisted(() => new Map<string, string>());
+const backend = vi.hoisted(() => ({ workspace: 'D:/vault', external: new Map<string, string>() }));
+const MAIN_VAULT = 'D:/vault';
+
+function toSlashes(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+/** 和真实后端一样，笔记路径相对于当前工作区解析 */
+function absolutePathOf(relativePath: string): string {
+  return `${toSlashes(backend.workspace)}/${relativePath}`;
+}
+
+function readFile(absolutePath: string): string | undefined {
+  return absolutePath.startsWith(`${MAIN_VAULT}/`)
+    ? disk.get(absolutePath.slice(MAIN_VAULT.length + 1))
+    : backend.external.get(absolutePath);
+}
+
+function writeFile(absolutePath: string, content: string) {
+  if (absolutePath.startsWith(`${MAIN_VAULT}/`)) {
+    disk.set(absolutePath.slice(MAIN_VAULT.length + 1), content);
+  } else {
+    backend.external.set(absolutePath, content);
+  }
+}
+
+/** 当前工作区中所有文件的相对路径 */
+function workspaceFiles(): string[] {
+  const root = `${toSlashes(backend.workspace)}/`;
+  return [...[...disk.keys()].map((path) => `${MAIN_VAULT}/${path}`), ...backend.external.keys()]
+    .filter((path) => path.startsWith(root))
+    .map((path) => path.slice(root.length));
+}
 
 function hashOf(content: string): string {
   return `hash:${content.length}:${content}`;
@@ -26,19 +60,22 @@ vi.mock('./api', async (importOriginal) => {
     initApiConfig: vi.fn(async () => ({ port: 0, token: '' })),
     healthCheck: vi.fn(async () => true),
     reconnectBackend: vi.fn(async () => true),
-    getWorkspace: vi.fn(async () => ({ path: 'D:/vault' })),
-    setWorkspace: vi.fn(async (path: string) => ({ path })),
+    getWorkspace: vi.fn(async () => ({ path: backend.workspace })),
+    setWorkspace: vi.fn(async (path: string) => {
+      backend.workspace = path;
+      return { path };
+    }),
     getTree: vi.fn(async () => treeOf()),
     refreshWorkspace: vi.fn(async () => treeOf()),
     getSearchIndexStatus: vi.fn(async () => ({ indexedFiles: 0, totalFiles: 0, lastIndexedAt: null })),
     searchNotes: vi.fn(async () => ({ results: [], total: 0, offset: 0, limit: 20 })),
     getNote: vi.fn(async (path: string) => {
-      const content = disk.get(path);
+      const content = readFile(absolutePathOf(path));
       if (content === undefined) throw new actual.ApiError(`Note not found: ${path}`, 404, { error: 'Note not found' });
       return noteOf(path, content);
     }),
     saveNote: vi.fn(async (path: string, content: string, baseHash?: string, force = false) => {
-      const current = disk.get(path);
+      const current = readFile(absolutePathOf(path));
       if (current === undefined) throw new actual.ApiError(`Note not found: ${path}`, 404, { error: 'Note not found' });
       if (!force && baseHash !== hashOf(current)) {
         throw new actual.ApiError('Note was modified outside NextTyproa', 409, {
@@ -48,12 +85,12 @@ vi.mock('./api', async (importOriginal) => {
           currentUpdatedAt: '2026-09-25T00:00:00Z',
         }, 'NOTE_CONFLICT');
       }
-      disk.set(path, content);
+      writeFile(absolutePathOf(path), content);
       return noteOf(path, content);
     }),
     createNote: vi.fn(async (path: string, content = '') => {
-      if (disk.has(path)) throw new actual.ApiError(`Note already exists: ${path}`, 409, { error: 'exists' });
-      disk.set(path, content);
+      if (readFile(absolutePathOf(path)) !== undefined) throw new actual.ApiError(`Note already exists: ${path}`, 409, { error: 'exists' });
+      writeFile(absolutePathOf(path), content);
       return noteOf(path, content);
     }),
   };
@@ -61,7 +98,7 @@ vi.mock('./api', async (importOriginal) => {
 
 function treeOf(): TreeNode[] {
   const root: TreeNode[] = [];
-  for (const path of [...disk.keys()].sort()) {
+  for (const path of workspaceFiles().sort()) {
     const parts = path.split('/');
     let level = root;
     parts.forEach((name, index) => {
@@ -117,16 +154,31 @@ beforeAll(() => {
 
 beforeEach(() => {
   disk.clear();
+  backend.workspace = MAIN_VAULT;
+  backend.external.clear();
   localStorage.clear();
   vi.mocked(api.saveNote).mockClear();
   vi.mocked(api.createNote).mockClear();
   vi.mocked(api.getNote).mockClear();
+  vi.mocked(api.setWorkspace).mockClear();
 });
 
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  delete window.nextTyproa;
 });
+
+type ElectronBridge = NonNullable<Window['nextTyproa']>;
+
+/** 只模拟测试用到的 Electron 接口（preload 暴露的 window.nextTyproa），其余保持缺省，App 会走浏览器分支 */
+function stubElectron(bridge: Partial<ElectronBridge>) {
+  window.nextTyproa = bridge as ElectronBridge;
+}
+
+function storedSettings(): Record<string, unknown> {
+  return JSON.parse(localStorage.getItem('nexttyproa-app-settings') ?? '{}') as Record<string, unknown>;
+}
 
 /** 以“重启后恢复标签页”的真实路径打开笔记：settings 里记录打开的标签页，App 启动时从磁盘读取激活的那一个 */
 async function openApp(notes: Record<string, string>, tabs: string[], activeTabPath = tabs[0]) {
@@ -386,5 +438,99 @@ describe('App (integration with mocked backend)', () => {
       expect(editorText()).toContain(EDITED);
       expect(savesOf(NOTE_A)).toBe(savesBefore);
     }, 20000);
+  });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P1-005：标签页只记录相对路径，切换工作区后旧标签会打开新工作区里同名的另一个文件
+  describe('RW-P1-005: switching to another workspace', () => {
+    const SECOND_VAULT = 'E:\\vault2';
+    const SECOND_NOTE = '第二库笔记.md';
+    const SECOND_VAULT_SAME_NAME = '# SECOND VAULT ascii-notes\n\n第二库同名文件\n';
+
+    async function openFirstVault() {
+      backend.external.set('E:/vault2/ascii-notes.md', SECOND_VAULT_SAME_NAME);
+      backend.external.set(`E:/vault2/${SECOND_NOTE}`, '# 第二库笔记\n\n第二库正文\n');
+      await openApp(
+        { 'ascii-notes.md': '# ascii-notes\n\n第一库正文\n', 'only-v1.md': '# only\n\n只在第一库\n' },
+        ['ascii-notes.md', 'only-v1.md'],
+      );
+    }
+
+    /** 没有标签时标签栏整个不渲染 */
+    function currentTabPaths(): string[] {
+      return screen.queryByRole('tablist', { name: '打开的文档' }) ? tabPaths() : [];
+    }
+
+    async function settle(ms = 1500) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    }
+
+    it('opening a note of another workspace (double-click / second instance) closes the old tabs instead of pointing them at same-named files', async () => {
+      let openFilePath: (filePath: string) => void = () => undefined;
+      stubElectron({
+        onOpenFilePath: (callback) => {
+          openFilePath = callback;
+          return () => undefined;
+        },
+      });
+      await openFirstVault();
+      typeAtEndOfParagraph('第一库正文', ' 未保存');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      await act(async () => openFilePath(`${SECOND_VAULT}\\${SECOND_NOTE}`));
+      await waitFor(() => expect(editorText()).toContain('第二库正文'), { timeout: 5000 });
+      await settle();
+
+      expect(api.setWorkspace).toHaveBeenCalledWith(SECOND_VAULT);
+      // 旧工作区的标签不能留下：留下的 ascii-notes.md 会打开第二个库里的同名文件
+      expect(currentTabPaths()).toEqual([SECOND_NOTE]);
+      // 重启后也不能再恢复出旧工作区的标签
+      expect((storedSettings().openTabs as { path: string }[]).map((tab) => tab.path)).toEqual([SECOND_NOTE]);
+      expect(storedSettings().openTabsWorkspace).toBe(SECOND_VAULT);
+      // 切换前的输入写回它所属的第一个库，第二个库里的同名文件不受影响
+      expect(disk.get('ascii-notes.md')).toBe('# ascii-notes\n\n第一库正文 未保存\n');
+      expect(backend.external.get('E:/vault2/ascii-notes.md')).toBe(SECOND_VAULT_SAME_NAME);
+    }, 20000);
+
+    it('打开文件夹 into another workspace closes the old workspace\'s tabs', async () => {
+      stubElectron({ selectWorkspaceFolder: vi.fn(async () => SECOND_VAULT) });
+      await openFirstVault();
+
+      fireEvent.click(screen.getByTitle('打开文件夹 (Ctrl+Shift+O)'));
+      await waitFor(() => expect(api.setWorkspace).toHaveBeenCalledWith(SECOND_VAULT), { timeout: 5000 });
+      await settle();
+
+      expect(currentTabPaths()).toEqual([]);
+      expect(editorText()).not.toContain('SECOND VAULT');
+      expect(storedSettings().openTabs).toEqual([]);
+      expect(storedSettings().openTabsWorkspace).toBe(SECOND_VAULT);
+    }, 20000);
+
+    it('re-opening the current folder keeps its tabs', async () => {
+      stubElectron({ selectWorkspaceFolder: vi.fn(async () => MAIN_VAULT) });
+      await openFirstVault();
+
+      fireEvent.click(screen.getByTitle('打开文件夹 (Ctrl+Shift+O)'));
+      await waitFor(() => expect(api.setWorkspace).toHaveBeenCalledWith(MAIN_VAULT), { timeout: 5000 });
+      await settle();
+
+      expect(currentTabPaths()).toEqual(['ascii-notes.md', 'only-v1.md']);
+    }, 20000);
+
+    it('does not restore tabs of another workspace after a reload when the backend workspace changed meanwhile', async () => {
+      await openFirstVault();
+      await settle(300);
+      cleanup();
+
+      // 例如后端被切换到了另一个库，或者 localStorage 里残留着别的库的标签
+      backend.workspace = 'E:/vault2';
+      render(<App />);
+      await waitFor(() => expect(screen.getAllByText(SECOND_NOTE).length).toBeGreaterThan(0), { timeout: 10000 });
+      await settle(1000);
+
+      expect(currentTabPaths()).toEqual([]);
+      expect(editorText()).not.toContain('SECOND VAULT');
+    }, 30000);
   });
 });

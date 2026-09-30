@@ -32,6 +32,7 @@ test('settings patch keeps every field the renderer legitimately sends', () => {
     recentWorkspaces: [{ path: workspace, openedAt: '2026-09-24T00:00:00.000Z' }],
     openTabs: [{ id: 'a.md', path: 'a.md', title: 'A' }, { id: 'b.md', path: 'b.md', title: 'B', missing: true }],
     activeTabPath: 'a.md',
+    openTabsWorkspace: workspace,
     writingModes: { focusMode: true, typewriterMode: false, distractionFreeMode: false },
   };
 
@@ -88,6 +89,7 @@ test('settings patch rejects values of the wrong type', () => {
     { lastOpenedFile: { folder: workspace } },
     { openTabs: [{ id: 1, path: 'a.md', title: 'A' }] },
     { openTabs: 'a.md' },
+    { openTabsWorkspace: 'relative/path' },
     { recentWorkspaces: [{ path: workspace }] },
     { shortcuts: { save: 'Ctrl+S' } },
     { writingModes: { focusMode: 'on' } },

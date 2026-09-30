@@ -935,6 +935,21 @@ export default function App() {
     return result.path;
   }, [refreshTree, rememberWorkspace]);
 
+  // 标签页只记录相对路径，只属于打开它们的工作区：换到另一个工作区时关闭旧工作区的标签，
+  // 否则点开旧标签会打开新工作区里同名的另一个文件（调用方已先保存当前笔记）
+  const switchWorkspace = useCallback(async (folderPath: string) => {
+    const path = await applyWorkspace(folderPath);
+    if (!foldersEqual(path, workspacePath)) {
+      // 在更新函数里持久化：排在前面、尚未执行的标签更新也会写 settings，不能让它们把旧标签写回去
+      setOpenTabs(() => {
+        void patchStoredAppSettings({ openTabs: [], activeTabPath: undefined, openTabsWorkspace: path }).catch(() => undefined);
+        return [];
+      });
+      setActiveTabPath(undefined);
+    }
+    return path;
+  }, [applyWorkspace, workspacePath]);
+
   const openNoteAt = useCallback(async (folderPath: string, relativePath: string) => {
     if (!isMarkdownPath(relativePath)) {
       throw new Error('暂不支持该文件浏览');
@@ -952,7 +967,7 @@ export default function App() {
       throw new Error('请先打开本地文件夹');
     }
     const folder = !foldersEqual(targetFolder, workspacePath)
-      ? await applyWorkspace(targetFolder)
+      ? await switchWorkspace(targetFolder)
       : targetFolder;
     if (seq !== openSeqRef.current) return;
 
@@ -975,7 +990,7 @@ export default function App() {
       folder,
       relativePath: note.path,
     });
-  }, [workspacePath, applyWorkspace, flushSave, rememberOpenedNote]);
+  }, [workspacePath, switchWorkspace, flushSave, rememberOpenedNote]);
 
   const bootstrap = useCallback(async () => {
     setError('');
@@ -1003,8 +1018,6 @@ export default function App() {
     setShortcutOverrides(settings.shortcuts);
     setRecentFiles(settings.recentFiles);
     setRecentWorkspaces(settings.recentWorkspaces);
-    setOpenTabs(settings.openTabs);
-    setActiveTabPath(settings.activeTabPath);
     setWritingModes(settings.writingModes);
 
     const ws = await getWorkspace();
@@ -1021,9 +1034,22 @@ export default function App() {
       }
     }
 
-    const restoredTabPath = settings.activeTabPath && settings.openTabs.some((tab) => tab.path === settings.activeTabPath)
+    // 标签页只保存相对路径：只在记录它们的那个工作区里恢复，否则会打开当前工作区里同名的另一个文件
+    // （旧版本没有记录 openTabsWorkspace，按当时的 lastWorkspace 判断）
+    const tabsWorkspace = settings.openTabsWorkspace ?? settings.lastWorkspace;
+    const tabsBelongHere = Boolean(wsPath) && (!tabsWorkspace || foldersEqual(tabsWorkspace, wsPath));
+    const restoredTabs = tabsBelongHere ? settings.openTabs : [];
+    setOpenTabs(restoredTabs);
+    setActiveTabPath(tabsBelongHere ? settings.activeTabPath : undefined);
+    if (wsPath) {
+      void patchStoredAppSettings(tabsBelongHere
+        ? { openTabsWorkspace: wsPath }
+        : { openTabs: [], activeTabPath: undefined, openTabsWorkspace: wsPath }).catch(() => undefined);
+    }
+
+    const restoredTabPath = settings.activeTabPath && restoredTabs.some((tab) => tab.path === settings.activeTabPath)
       ? settings.activeTabPath
-      : settings.openTabs[0]?.path;
+      : restoredTabs[0]?.path;
     const last = settings.lastOpenedFile;
     const pathToRestore = restoredTabPath || (last?.folder && foldersEqual(last.folder, wsPath) ? last.relativePath : undefined);
 
@@ -1041,13 +1067,13 @@ export default function App() {
         setActiveTabPath(note.path);
         setOpenTabs((prev) => upsertEditorTab(prev, makeEditorTab(note)));
       } catch {
-        const nextTabs = settings.openTabs.map((tab) => (
+        const nextTabs = restoredTabs.map((tab) => (
           tab.path === pathToRestore
             ? { ...tab, missing: true, saveStatus: 'error' as const }
             : tab
         ));
         setOpenTabs(nextTabs);
-        if (settings.openTabs.some((tab) => tab.path === pathToRestore)) {
+        if (restoredTabs.some((tab) => tab.path === pathToRestore)) {
           setActiveTabPath(pathToRestore);
           void patchStoredAppSettings({ openTabs: nextTabs, activeTabPath: pathToRestore }).catch(() => undefined);
         }
@@ -1128,9 +1154,9 @@ export default function App() {
     }
     const selected = await window.nextTyproa.selectWorkspaceFolder();
     if (!selected) return false;
-    await applyWorkspace(selected);
+    await switchWorkspace(selected);
     return true;
-  }, [workspacePath, applyWorkspace, showError]);
+  }, [workspacePath, switchWorkspace, showError]);
 
   const getCreateParentPath = useCallback(() => {
     if (!selectedTreeItem) return '';
@@ -1172,11 +1198,11 @@ export default function App() {
       }
       clearCurrentDocumentState();
       await clearLastOpenedFile();
-      await applyWorkspace(selected);
+      await switchWorkspace(selected);
     } catch (e) {
       showError(describeError(e, '打开文件夹失败'));
     }
-  }, [applyWorkspace, clearCurrentDocumentState, clearLastOpenedFile, flushSave, showError]);
+  }, [switchWorkspace, clearCurrentDocumentState, clearLastOpenedFile, flushSave, showError]);
 
   const handleOpenFile = useCallback(async () => {
     try {

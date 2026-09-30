@@ -214,13 +214,14 @@ export async function loadAndApplyImageSettings(): Promise<ImageUploadSettings> 
   return settings;
 }
 
-export async function loadAndApplyPreferenceSettings(): Promise<PreferenceSettings & Pick<AppSettings, 'lastWorkspace' | 'lastOpenedFile' | 'fileTreeExpandedFolders'>> {
+export async function loadAndApplyPreferenceSettings(): Promise<PreferenceSettings & Pick<AppSettings, 'lastWorkspace' | 'lastOpenedFile' | 'fileTreeExpandedFolders' | 'openTabsWorkspace'>> {
   const raw = await loadAppSettings();
   const settings = preferenceSettingsFromAppSettings(raw);
   applyImageUploadSettings(settings);
   return {
     ...settings,
     lastWorkspace: typeof raw.lastWorkspace === 'string' ? raw.lastWorkspace : undefined,
+    openTabsWorkspace: typeof raw.openTabsWorkspace === 'string' ? raw.openTabsWorkspace : undefined,
     lastOpenedFile: openedFileRefFromAppSettings(raw),
     fileTreeExpandedFolders: fileTreeExpandedFoldersFromAppSettings(raw),
   };

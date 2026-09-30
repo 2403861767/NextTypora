@@ -164,6 +164,8 @@ export interface AppSettings {
   recentWorkspaces?: RecentWorkspaceRef[];
   openTabs?: PersistedEditorTab[];
   activeTabPath?: string;
+  // openTabs 只保存相对路径，这里记录它们属于哪个工作区
+  openTabsWorkspace?: string;
   writingModes?: Partial<WritingModeSettings>;
 }
 
