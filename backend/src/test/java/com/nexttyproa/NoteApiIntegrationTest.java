@@ -21,6 +21,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
@@ -170,6 +171,59 @@ class NoteApiIntegrationTest {
                         .content(objectMapper.writeValueAsString(saveRequest)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error", containsString("Unsupported encoding")));
+    }
+
+    // BUG_BACKLOG_REAL_WORLD.md RW-P2-005：带 BOM 的 UTF-16LE 文件（记事本“Unicode”格式）打开时报 HTTP 500，索引也记为失败
+    @Test
+    void utf16NoteWithBomCanBeOpenedSavedAndIndexed() throws Exception {
+        String content = "# UTF-16 编码测试\n\nutf16-search-keyword 中文内容";
+        Path file = tempVault.resolve("编码/utf16.md");
+        Files.createDirectories(file.getParent());
+        Files.write(file, utf16LeWithBom(content));
+        configureWorkspace();
+
+        String body = mockMvc.perform(get("/api/note")
+                        .header("X-Auth-Token", TOKEN)
+                        .param("path", "编码/utf16.md"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").value(content))
+                .andExpect(jsonPath("$.encoding").value("UTF-16LE"))
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+
+        SaveNoteRequest saveRequest = new SaveNoteRequest();
+        saveRequest.setPath("编码/utf16.md");
+        saveRequest.setContent(content + "\n追加");
+        saveRequest.setBaseHash(objectMapper.readTree(body).get("contentHash").asText());
+        mockMvc.perform(put("/api/note")
+                        .header("X-Auth-Token", TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(saveRequest)))
+                .andExpect(status().isOk());
+        // 保存后仍是带 BOM 的 UTF-16LE，下次还能打开
+        assertThat(Files.readAllBytes(file)).isEqualTo(utf16LeWithBom(content + "\n追加"));
+
+        mockMvc.perform(post("/api/tree/refresh")
+                        .header("X-Auth-Token", TOKEN))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/search/status")
+                        .header("X-Auth-Token", TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.failedFiles").value(0));
+        mockMvc.perform(get("/api/search")
+                        .header("X-Auth-Token", TOKEN)
+                        .param("q", "utf16-search-keyword"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.results", hasSize(1)))
+                .andExpect(jsonPath("$.results[0].path").value("编码/utf16.md"));
+    }
+
+    private static byte[] utf16LeWithBom(String content) {
+        byte[] body = content.getBytes(StandardCharsets.UTF_16LE);
+        byte[] bytes = new byte[body.length + 2];
+        bytes[0] = (byte) 0xFF;
+        bytes[1] = (byte) 0xFE;
+        System.arraycopy(body, 0, bytes, 2, body.length);
+        return bytes;
     }
 
     @Test

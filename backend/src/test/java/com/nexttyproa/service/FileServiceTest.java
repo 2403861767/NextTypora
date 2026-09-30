@@ -3,13 +3,16 @@ package com.nexttyproa.service;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -229,6 +232,64 @@ class FileServiceTest {
         assertEquals((byte) 0xBB, saved[1]);
         assertEquals((byte) 0xBF, saved[2]);
         assertEquals("World", new String(saved, 3, saved.length - 3, StandardCharsets.UTF_8));
+    }
+
+    // BUG_BACKLOG_REAL_WORLD.md RW-P2-005：记事本“Unicode”格式（带 BOM 的 UTF-16）每个 ASCII 字符后都有 0x00，
+    // 被当成二进制文件拒绝打开（HTTP 500）；保存时也只会写 UTF-8 的 BOM
+    @Test
+    void readsAndPreservesUtf16LeWithBom(@TempDir Path vaultRoot) throws Exception {
+        assertUtf16RoundTrip(vaultRoot, StandardCharsets.UTF_16LE, new byte[] {(byte) 0xFF, (byte) 0xFE}, "UTF-16LE");
+    }
+
+    @Test
+    void readsAndPreservesUtf16BeWithBom(@TempDir Path vaultRoot) throws Exception {
+        assertUtf16RoundTrip(vaultRoot, StandardCharsets.UTF_16BE, new byte[] {(byte) 0xFE, (byte) 0xFF}, "UTF-16BE");
+    }
+
+    private void assertUtf16RoundTrip(Path vaultRoot, Charset charset, byte[] bom, String expectedEncoding) throws Exception {
+        Path file = vaultRoot.resolve("utf16.md");
+        String content = "# UTF-16 编码测试\n中文内容 abc";
+        Files.write(file, concat(bom, content.getBytes(charset)));
+
+        FileService.ReadFileResult read = fileService.readFileWithEncoding(file);
+
+        assertEquals(expectedEncoding, read.encoding());
+        assertTrue(read.hasBom());
+        assertEquals(content, read.content());
+
+        fileService.writeFileAtomic(file, read.content() + "\n追加", read.encoding(), read.hasBom(), true);
+        byte[] saved = Files.readAllBytes(file);
+        assertArrayEquals(bom, Arrays.copyOf(saved, bom.length));
+        assertEquals(content + "\n追加", new String(saved, bom.length, saved.length - bom.length, charset));
+        assertTrue(Files.exists(vaultRoot.resolve(".nexttyproa-backups")));
+        assertEquals(content + "\n追加", fileService.readFileWithEncoding(file).content());
+    }
+
+    @Test
+    void stillRejectsNulBytesWithoutAUtf16Bom(@TempDir Path vaultRoot) throws Exception {
+        Path file = vaultRoot.resolve("binary.md");
+        Files.write(file, new byte[] {(byte) 0x89, 'P', 'N', 'G', 0, 0, 0, 13});
+
+        IOException error = assertThrows(IOException.class, () -> fileService.readFileWithEncoding(file));
+
+        assertTrue(error.getMessage().contains("binary"), error.getMessage());
+    }
+
+    @Test
+    void rejectsUtf32LeInsteadOfOpeningItAsUtf16(@TempDir Path vaultRoot) throws Exception {
+        // UTF-32LE 的 BOM（FF FE 00 00）以 UTF-16LE 的 BOM 开头：不能当 UTF-16 打开成一串 NUL 字符
+        Path file = vaultRoot.resolve("utf32.md");
+        Files.write(file, concat(new byte[] {(byte) 0xFF, (byte) 0xFE, 0, 0}, "# Title".getBytes(Charset.forName("UTF-32LE"))));
+
+        IOException error = assertThrows(IOException.class, () -> fileService.readFileWithEncoding(file));
+
+        assertTrue(error.getMessage().contains("binary"), error.getMessage());
+    }
+
+    private static byte[] concat(byte[] first, byte[] second) {
+        byte[] result = Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, result, first.length, second.length);
+        return result;
     }
 
     @Test

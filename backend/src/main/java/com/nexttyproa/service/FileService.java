@@ -37,6 +37,10 @@ public class FileService {
     private static final Logger log = LoggerFactory.getLogger(FileService.class);
 
     private static final byte[] UTF8_BOM = new byte[] {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
+    private static final byte[] UTF16LE_BOM = new byte[] {(byte) 0xFF, (byte) 0xFE};
+    private static final byte[] UTF16BE_BOM = new byte[] {(byte) 0xFE, (byte) 0xFF};
+    private static final String UTF16LE = "UTF-16LE";
+    private static final String UTF16BE = "UTF-16BE";
     private static final String DEFAULT_ENCODING = "UTF-8";
     private static final int BINARY_SCAN_LIMIT = 8192;
     private static final String[] LEGACY_ENCODINGS = {"GBK", "Big5", "Shift_JIS"};
@@ -131,6 +135,16 @@ public class FileService {
 
     public ReadFileResult readFileWithEncoding(Path file) throws IOException {
         byte[] bytes = Files.readAllBytes(file);
+        // 记事本的“Unicode”格式是带 BOM 的 UTF-16：每个 ASCII 字符旁都有 0x00，要在按 NUL 判断二进制之前识别
+        String utf16 = startsWith(bytes, UTF16LE_BOM) ? UTF16LE : startsWith(bytes, UTF16BE_BOM) ? UTF16BE : null;
+        if (utf16 != null) {
+            String content = decodeStrict(java.util.Arrays.copyOfRange(bytes, 2, bytes.length), Charset.forName(utf16));
+            // 例如 UTF-32LE（FF FE 00 00）：按 UTF-16 解出来是一串 NUL，不是文本
+            if (content.indexOf('\0') >= 0) {
+                throw new IOException("File appears to be binary and cannot be opened as Markdown: " + file);
+            }
+            return new ReadFileResult(content, utf16, true);
+        }
         if (looksBinary(bytes)) {
             throw new IOException("File appears to be binary and cannot be opened as Markdown: " + file);
         }
@@ -197,10 +211,11 @@ public class FileService {
         try {
             String normalizedEncoding = normalizeEncodingName(encoding);
             byte[] encoded = safeContent.getBytes(Charset.forName(normalizedEncoding));
-            if (hasBom && DEFAULT_ENCODING.equalsIgnoreCase(normalizedEncoding)) {
-                byte[] withBom = new byte[UTF8_BOM.length + encoded.length];
-                System.arraycopy(UTF8_BOM, 0, withBom, 0, UTF8_BOM.length);
-                System.arraycopy(encoded, 0, withBom, UTF8_BOM.length, encoded.length);
+            byte[] bom = hasBom ? bomFor(normalizedEncoding) : null;
+            if (bom != null) {
+                byte[] withBom = new byte[bom.length + encoded.length];
+                System.arraycopy(bom, 0, withBom, 0, bom.length);
+                System.arraycopy(encoded, 0, withBom, bom.length, encoded.length);
                 encoded = withBom;
             }
             Files.write(temp, encoded);
@@ -403,6 +418,19 @@ public class FileService {
         }
         Charset.forName(normalized);
         return normalized;
+    }
+
+    private static byte[] bomFor(String encoding) {
+        if (DEFAULT_ENCODING.equalsIgnoreCase(encoding)) {
+            return UTF8_BOM;
+        }
+        if (UTF16LE.equalsIgnoreCase(encoding)) {
+            return UTF16LE_BOM;
+        }
+        if (UTF16BE.equalsIgnoreCase(encoding)) {
+            return UTF16BE_BOM;
+        }
+        return null;
     }
 
     private static boolean startsWith(byte[] value, byte[] prefix) {
