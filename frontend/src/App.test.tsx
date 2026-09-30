@@ -161,6 +161,14 @@ beforeAll(() => {
       },
     });
   }
+  // 偏好设置里自动调整高度的 TextArea 依赖 ResizeObserver，jsdom 同样没有
+  if (!('ResizeObserver' in window)) {
+    vi.stubGlobal('ResizeObserver', class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+  }
 });
 
 beforeEach(() => {
@@ -447,6 +455,27 @@ describe('App (integration with mocked backend)', () => {
       }, 20000);
     });
   });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P2-003：偏好设置里未保存的修改，会在 8 秒一次的工作区轮询（App 重新渲染）后被重置
+  it('keeps unsaved edits in 偏好设置 across the 8-second workspace poll', async () => {
+    await openApp({ 'a.md': '# A\n\n第一段\n' }, ['a.md']);
+
+    fireEvent.click(screen.getByTitle('偏好设置 (Ctrl+,)'));
+    const dialog = await screen.findByRole('dialog', { name: '偏好设置' });
+    const customCss = within(dialog).getByPlaceholderText('.ProseMirror p { line-height: 1.8; }');
+    fireEvent.change(customCss, { target: { value: '.ProseMirror p { color: red; }' } });
+    const spellCheck = within(dialog).getByRole('switch');
+    fireEvent.click(spellCheck);
+    expect(spellCheck).toHaveAttribute('aria-checked', 'true');
+
+    // 等轮询真正跑过一次（刷新文件树会让 App 重新渲染），再留一点时间给随后的渲染
+    vi.mocked(api.refreshWorkspace).mockClear();
+    await waitFor(() => expect(api.refreshWorkspace).toHaveBeenCalled(), { timeout: 10000 });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(customCss).toHaveValue('.ProseMirror p { color: red; }');
+    expect(spellCheck).toHaveAttribute('aria-checked', 'true');
+  }, 25000);
 
   // BUG_BACKLOG_REAL_WORLD.md RW-P1-003：笔记在外部被删除/重命名后，后端返回 404，
   // 应提示“文件已被移动或删除”，并且“另存为”“关闭标签页”两个选项都要真正可用

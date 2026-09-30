@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { ReloadOutlined, UndoOutlined } from '@ant-design/icons';
 import { Alert, Button, Input, Radio, Select, Space, Switch, Typography, message } from 'antd';
 import { AnimatePresence, motion } from 'motion/react';
@@ -45,14 +45,18 @@ export function SettingsModal({ open, initial, onClose, onSaved }: SettingsModal
   const [externalThemes, setExternalThemes] = useState<ExternalTheme[]>([]);
   const [loadingThemes, setLoadingThemes] = useState(false);
 
+  // App 每次渲染都会传入新的 initial 对象：只在打开对话框时用它重置草稿，否则轮询引起的重新渲染会冲掉未保存的修改
+  const initialRef = useRef(initial);
+  initialRef.current = initial;
+
   useEffect(() => {
     if (open) {
-      setDraft(initial);
+      setDraft(initialRef.current);
       setTestResult(null);
       setRecordingShortcutId(null);
       void reloadExternalThemes();
     }
-  }, [open, initial]);
+  }, [open]);
 
   const handleTestPicGo = async () => {
     setTesting(true);
@@ -71,7 +75,15 @@ export function SettingsModal({ open, initial, onClose, onSaved }: SettingsModal
   const handleSave = async () => {
     setSaving(true);
     try {
-      const saved = await persistPreferenceSettings(draft);
+      // 草稿是打开时的快照；标签页、最近文件、写作模式不在这里编辑，打开期间可能已变化，按保存时的最新值写入
+      const saved = await persistPreferenceSettings({
+        ...draft,
+        recentFiles: initial.recentFiles,
+        recentWorkspaces: initial.recentWorkspaces,
+        openTabs: initial.openTabs,
+        activeTabPath: initial.activeTabPath,
+        writingModes: initial.writingModes,
+      });
       onSaved(saved);
       onClose();
     } finally {
