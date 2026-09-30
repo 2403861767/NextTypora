@@ -19,12 +19,15 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
@@ -208,6 +211,97 @@ class NoteApiIntegrationTest {
                         .content(objectMapper.writeValueAsString(renameRequest)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error", containsString("Path already exists")));
+    }
+
+    // BUG_BACKLOG_REAL_WORLD.md RW-P2-002：NTFS 不区分大小写，只改大小写的重命名（a.md → A.md）被误判为“目标已存在”
+    @Test
+    void caseOnlyRenameOfNoteChangesTheNameOnDisk() throws Exception {
+        Files.writeString(tempVault.resolve("ascii-notes.md"), "# ASCII\n\ncase-rename-keyword");
+        configureWorkspace();
+
+        performRename("ascii-notes.md", "ASCII-notes.md")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.path").value("ASCII-notes.md"));
+
+        // 按目录里实际存储的名字判断：同一个文件在 NTFS 上用哪种大小写都能访问到
+        assertThat(namesIn(tempVault)).contains("ASCII-notes.md").doesNotContain("ascii-notes.md");
+        assertThat(Files.readString(tempVault.resolve("ASCII-notes.md"))).isEqualTo("# ASCII\n\ncase-rename-keyword");
+        mockMvc.perform(get("/api/note")
+                        .header("X-Auth-Token", TOKEN)
+                        .param("path", "ASCII-notes.md"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.path").value("ASCII-notes.md"));
+        mockMvc.perform(get("/api/search")
+                        .header("X-Auth-Token", TOKEN)
+                        .param("q", "case-rename-keyword"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.results", hasSize(1)))
+                .andExpect(jsonPath("$.results[0].path").value("ASCII-notes.md"));
+    }
+
+    @Test
+    void caseOnlyRenameOfFolderChangesTheNameOnDisk() throws Exception {
+        Files.createDirectories(tempVault.resolve("docs"));
+        Files.writeString(tempVault.resolve("docs/note.md"), "# Note\n\nfolder-case-keyword");
+        configureWorkspace();
+
+        performRename("docs", "Docs")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.path").value("Docs"));
+
+        assertThat(namesIn(tempVault)).contains("Docs").doesNotContain("docs");
+        mockMvc.perform(get("/api/note")
+                        .header("X-Auth-Token", TOKEN)
+                        .param("path", "Docs/note.md"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content", containsString("folder-case-keyword")));
+        mockMvc.perform(get("/api/search")
+                        .header("X-Auth-Token", TOKEN)
+                        .param("q", "folder-case-keyword"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.results", hasSize(1)))
+                .andExpect(jsonPath("$.results[0].path").value("Docs/note.md"));
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void renameOntoAnotherFileThatDiffersOnlyInCaseIsStillRejected() throws Exception {
+        configureWorkspace();
+        Files.writeString(tempVault.resolve("a.md"), "# A");
+        Files.writeString(tempVault.resolve("B.md"), "# B");
+
+        performRename("a.md", "b.md")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error", containsString("Path already exists")));
+
+        assertThat(namesIn(tempVault)).contains("a.md", "B.md");
+        assertThat(Files.readString(tempVault.resolve("B.md"))).isEqualTo("# B");
+    }
+
+    @Test
+    void renameToTheIdenticalNameIsStillRejected() throws Exception {
+        configureWorkspace();
+        Files.writeString(tempVault.resolve("same.md"), "# Same");
+
+        performRename("same.md", "same.md")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error", containsString("Path already exists")));
+    }
+
+    private ResultActions performRename(String path, String newName) throws Exception {
+        RenamePathRequest renameRequest = new RenamePathRequest();
+        renameRequest.setPath(path);
+        renameRequest.setNewName(newName);
+        return mockMvc.perform(put("/api/files/rename")
+                .header("X-Auth-Token", TOKEN)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(renameRequest)));
+    }
+
+    private static List<String> namesIn(Path directory) throws Exception {
+        try (Stream<Path> entries = Files.list(directory)) {
+            return entries.map(entry -> entry.getFileName().toString()).toList();
+        }
     }
 
     @Test

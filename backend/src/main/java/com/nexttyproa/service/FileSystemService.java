@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 
@@ -88,12 +89,22 @@ public class FileSystemService {
         if (!target.startsWith(vaultRoot)) {
             throw new BadRequestException("Path traversal detected: " + newName);
         }
-        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+        boolean targetExists = Files.exists(target, LinkOption.NOFOLLOW_LINKS);
+        // 不区分大小写的文件系统（NTFS）上只改大小写（a.md → A.md）时，target 就是 source 这一项本身
+        boolean caseOnlyRename = targetExists
+                && !source.getFileName().toString().equals(newName)
+                && source.toRealPath(LinkOption.NOFOLLOW_LINKS).equals(target.toRealPath(LinkOption.NOFOLLOW_LINKS));
+        if (targetExists && !caseOnlyRename) {
             throw new ConflictException("Path already exists: " + fileService.relativePathString(vaultRoot, target));
         }
 
         boolean directory = Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS);
-        Files.move(source, target);
+        if (caseOnlyRename) {
+            // 普通 Files.move 发现是同一个文件会直接返回、名字不变；ATOMIC_MOVE 直接调用系统重命名才能改掉大小写
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+        } else {
+            Files.move(source, target);
+        }
         String newRelativePath = fileService.relativePathString(vaultRoot, target);
         audit.info("Renamed {}: {} -> {}", directory ? "folder" : "file", normalized, newRelativePath);
         if (directory) {
