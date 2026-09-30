@@ -2372,6 +2372,7 @@ export default function App() {
                   <MarkdownEditor
                     noteKey={editorNoteKey}
                     pendingMarkdownRef={pendingMarkdownRef}
+                    onImageUploadError={(uploadError) => showError(describeError(uploadError, '图片上传失败'))}
                     notePath={selectedPath}
                     value={content}
                     onChange={setContent}

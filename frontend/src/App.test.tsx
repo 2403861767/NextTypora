@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { Note, TreeNode } from './types';
 
 // 用内存中的“磁盘”替代后端：App 通过 ./api 读写笔记，其余逻辑（自动保存、标签页、对话框、编辑器）都是真实的
@@ -138,6 +138,17 @@ beforeAll(() => {
     const emptyRect = { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}) };
     Range.prototype.getClientRects = () => Object.assign([], { item: () => null }) as unknown as DOMRectList;
     Range.prototype.getBoundingClientRect = () => emptyRect as DOMRect;
+  }
+  // jsdom 没有 ClipboardEvent / DragEvent；Milkdown 的上传插件用 instanceof 区分粘贴和拖放
+  if (!('ClipboardEvent' in window)) {
+    vi.stubGlobal('ClipboardEvent', class ClipboardEvent extends Event {
+      clipboardData: DataTransfer | null = null;
+    });
+  }
+  if (!('DragEvent' in window)) {
+    vi.stubGlobal('DragEvent', class DragEvent extends MouseEvent {
+      dataTransfer: DataTransfer | null = null;
+    });
   }
   if (!('IntersectionObserver' in window)) {
     Object.defineProperty(window, 'IntersectionObserver', {
@@ -600,6 +611,95 @@ describe('App (integration with mocked backend)', () => {
       await act(async () => menuOpenFile());
 
       await expectOpenedInCurrentWorkspace();
+    }, 20000);
+  });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P1-008：粘贴的图片上传失败时（如超过后端大小上限），
+  // 编辑器里的 "Upload in progress..." 占位一直不消失，也没有任何提示
+  describe('RW-P1-008: pasting a screenshot into the WYSIWYG editor', () => {
+    const NOTE = '会议纪要.md';
+    const NOTE_CONTENT = '# 会议纪要\n\n参会人：张三、李四\n';
+    const PLACEHOLDER = 'Upload in progress...';
+    let fetchSpy: MockInstance<typeof fetch> | undefined;
+
+    afterEach(() => {
+      fetchSpy?.mockRestore();
+      fetchSpy = undefined;
+    });
+
+    /** 上传请求（POST /api/asset）挂起，直到测试给出后端的响应 */
+    function holdUploadRequest(): (response: Response) => void {
+      let respond: (response: Response) => void = () => undefined;
+      fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>((resolve) => {
+        respond = resolve;
+      }));
+      return (response) => respond(response);
+    }
+
+    function jsonResponse(status: number, body: unknown): Response {
+      return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    /** 与在编辑器里按 Ctrl+V 粘贴一张截图相同：剪贴板里只有图片文件，没有文本 */
+    function pasteImage(file: File) {
+      const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', {
+        value: {
+          files: Object.assign([file], { item: (index: number) => (index === 0 ? file : null) }),
+          types: ['Files'],
+          getData: () => '',
+        },
+      });
+      document.querySelector('.typora-editor .ProseMirror')!.dispatchEvent(event);
+    }
+
+    function screenshot(): File {
+      // 全屏 PNG 截图通常有 1–3 MB
+      return new File([new Uint8Array(1536 * 1024)], 'big-screenshot.png', { type: 'image/png' });
+    }
+
+    async function settle(ms = 1500) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    }
+
+    async function pasteAndWaitForUpload() {
+      const respond = holdUploadRequest();
+      await openApp({ [NOTE]: NOTE_CONTENT }, [NOTE]);
+      pasteImage(screenshot());
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1), { timeout: 5000 });
+      expect(String(fetchSpy!.mock.calls[0][0])).toContain('/api/asset');
+      // 上传进行中显示占位：说明走的是编辑器真正的粘贴上传流程
+      await waitFor(() => expect(editorText()).toContain(PLACEHOLDER), { timeout: 5000 });
+      return respond;
+    }
+
+    it('a failed upload removes the "Upload in progress..." placeholder and tells the user why', async () => {
+      const respond = await pasteAndWaitForUpload();
+
+      respond(jsonResponse(413, { error: 'The field file exceeds its maximum permitted size of 104857600 bytes.' }));
+
+      await waitFor(() => expect(editorText()).not.toContain(PLACEHOLDER), { timeout: 3000 });
+      await waitFor(() => expect(isDialogOpen('提示')).toBe(true), { timeout: 3000 });
+      expect(openDialog('提示')!.textContent).toContain('图片上传失败');
+      expect(openDialog('提示')!.textContent).toContain('exceeds its maximum permitted size');
+
+      // 失败的粘贴不改动正文：既没有插入空图片，也不会因此触发保存
+      await settle();
+      expect(editorText()).not.toContain(PLACEHOLDER);
+      expect(api.saveNote).not.toHaveBeenCalled();
+      expect(disk.get(NOTE)).toBe(NOTE_CONTENT);
+    }, 20000);
+
+    it('a successful upload still replaces the placeholder with the image reference', async () => {
+      const respond = await pasteAndWaitForUpload();
+
+      respond(jsonResponse(200, { path: '会议纪要.assets/1-1.png', markdownRef: '会议纪要.assets/1-1.png' }));
+
+      await waitFor(() => expect(editorText()).not.toContain(PLACEHOLDER), { timeout: 3000 });
+      await waitFor(() => expect(disk.get(NOTE)).toContain('会议纪要.assets/1-1.png'), { timeout: 5000 });
+      expect(isDialogOpen('提示')).toBe(false);
     }, 20000);
   });
 });

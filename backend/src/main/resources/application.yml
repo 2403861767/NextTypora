@@ -5,6 +5,11 @@ server:
 spring:
   application:
     name: nexttyproa-backend
+  servlet:
+    multipart:
+      # 默认上限只有 1 MB，而粘贴的全屏截图通常有 1–3 MB；与 Electron 端 PicGo 上传的上限保持一致
+      max-file-size: 100MB
+      max-request-size: 100MB
 
 nexttyproa:
   auth-token: ${AUTH_TOKEN:}

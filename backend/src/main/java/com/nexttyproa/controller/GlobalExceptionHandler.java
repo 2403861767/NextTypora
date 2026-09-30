@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.nio.charset.IllegalCharsetNameException;
 import java.nio.charset.UnsupportedCharsetException;
@@ -61,6 +62,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({IllegalCharsetNameException.class, UnsupportedCharsetException.class})
     public ResponseEntity<Map<String, String>> handleInvalidCharset(IllegalArgumentException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Unsupported encoding: " + ex.getMessage()));
+    }
+
+    // 上传超过 spring.servlet.multipart 上限是客户端的问题：返回 413 和具体原因（含上限字节数），供前端提示
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Map<String, String>> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
+        String reason = ex.getMostSpecificCause().getMessage();
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(Map.of("error", reason != null ? reason : "Uploaded file is too large"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

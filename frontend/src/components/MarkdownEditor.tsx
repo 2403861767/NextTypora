@@ -3,6 +3,7 @@ import { Crepe } from '@milkdown/crepe';
 import { editorViewCtx } from '@milkdown/kit/core';
 import type { Ctx } from '@milkdown/kit/ctx';
 import type { Node as ProseNode } from '@milkdown/kit/prose/model';
+import { uploadConfig } from '@milkdown/kit/plugin/upload';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { Milkdown, MilkdownProvider, useEditor, useInstance } from '@milkdown/react';
 import { useTyporaInlineCode } from '../hooks/useTyporaInlineCode';
@@ -32,6 +33,7 @@ interface MarkdownEditorProps {
   isDark: boolean;
   typewriterMode?: boolean;
   pendingMarkdownRef?: MutableRefObject<PendingMarkdownReader | null>;
+  onImageUploadError?: (error: unknown) => void;
 }
 
 function EditorInner({
@@ -44,10 +46,12 @@ function EditorInner({
   isDark,
   typewriterMode,
   pendingMarkdownRef,
+  onImageUploadError,
 }: MarkdownEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
   const onReadyRef = useRef(onReady);
+  const onImageUploadErrorRef = useRef(onImageUploadError);
   const notePathRef = useRef(notePath);
   const isDarkRef = useRef(isDark);
   const readerRef = useRef<PendingMarkdownReader | null>(null);
@@ -58,6 +62,7 @@ function EditorInner({
   const [frontmatter] = useState(() => splitFrontmatter(value).frontmatter);
   onChangeRef.current = onChange;
   onReadyRef.current = onReady;
+  onImageUploadErrorRef.current = onImageUploadError;
   notePathRef.current = notePath;
   isDarkRef.current = isDark;
 
@@ -182,6 +187,22 @@ function EditorInner({
       let hardBreakStyle: HardBreakStyle = 'backslash';
       crepe.editor.config((ctx) => configureMarkdownStringify(ctx, () => hardBreakStyle));
 
+      // 粘贴/拖入图片时 upload 插件先显示 "Upload in progress..." 占位；上传失败它只 console.error，占位永远不会消失。
+      // 失败时交给 App 提示原因，并返回空内容，让插件移除占位且不插入任何东西
+      crepe.editor.config((ctx) => {
+        ctx.update(uploadConfig.key, (config) => ({
+          ...config,
+          uploader: async (...args) => {
+            try {
+              return await config.uploader(...args);
+            } catch (error) {
+              onImageUploadErrorRef.current?.(error);
+              return [];
+            }
+          },
+        }));
+      });
+
       crepe.on((listener) => {
         // 最近一次通过 onReady/onChange 上报的文档；markdownUpdated 有 200ms 防抖，编辑器销毁时还会直接取消，
         // 所以 App 在切换、关闭、退出前要通过 pendingMarkdownRef 同步取走这之后的修改
@@ -240,7 +261,7 @@ function EditorInner({
   );
 }
 
-export function MarkdownEditor({ value, onChange, onReady, noteKey, notePath, spellCheckEnabled, isDark, typewriterMode = false, pendingMarkdownRef }: MarkdownEditorProps) {
+export function MarkdownEditor({ value, onChange, onReady, noteKey, notePath, spellCheckEnabled, isDark, typewriterMode = false, pendingMarkdownRef, onImageUploadError }: MarkdownEditorProps) {
   return (
     <MilkdownProvider key={noteKey}>
       <EditorInner
@@ -253,6 +274,7 @@ export function MarkdownEditor({ value, onChange, onReady, noteKey, notePath, sp
         isDark={isDark}
         typewriterMode={typewriterMode}
         pendingMarkdownRef={pendingMarkdownRef}
+        onImageUploadError={onImageUploadError}
       />
     </MilkdownProvider>
   );
