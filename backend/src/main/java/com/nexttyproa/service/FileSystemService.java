@@ -137,9 +137,32 @@ public class FileSystemService {
         if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             throw new ConflictException("Path already exists: " + fileService.relativePathString(vaultRoot, target));
         }
+        String newRelativePath = fileService.relativePathString(vaultRoot, target);
+
+        // 粘贴的图片保存在笔记旁的 <笔记名>.assets 目录（文件树中隐藏，用户无法单独移动），要随笔记一起移动
+        Path assetsSource = directory || !fileService.isMarkdownPath(normalized)
+                ? null
+                : existingAssetsFolder(vaultRoot, normalized);
+        Path assetsTarget = null;
+        if (assetsSource != null) {
+            assetsTarget = resolveSafe(vaultRoot, AssetService.assetDirForNote(newRelativePath));
+            if (Files.exists(assetsTarget, LinkOption.NOFOLLOW_LINKS)) {
+                throw new ConflictException("Path already exists: " + fileService.relativePathString(vaultRoot, assetsTarget));
+            }
+        }
 
         Files.move(source, target);
-        String newRelativePath = fileService.relativePathString(vaultRoot, target);
+        if (assetsSource != null) {
+            try {
+                Files.move(assetsSource, assetsTarget);
+            } catch (IOException e) {
+                Files.move(target, source);
+                throw e;
+            }
+            audit.info("Moved assets folder: {} -> {}",
+                    fileService.relativePathString(vaultRoot, assetsSource),
+                    fileService.relativePathString(vaultRoot, assetsTarget));
+        }
         audit.info("Moved {}: {} -> {}", directory ? "folder" : "file", normalized, newRelativePath);
         if (directory) {
             indexService.reindexVault(vaultRoot);
@@ -172,6 +195,17 @@ public class FileSystemService {
                 return FileVisitResult.CONTINUE;
             }
         });
+    }
+
+    private Path existingAssetsFolder(Path vaultRoot, String notePath) throws IOException {
+        Path folder;
+        try {
+            folder = fileService.resolveSafe(vaultRoot, AssetService.assetDirForNote(notePath));
+        } catch (SecurityException e) {
+            // 例如符号链接：不属于这篇笔记自己的图片目录，不随笔记移动
+            return null;
+        }
+        return Files.isDirectory(folder, LinkOption.NOFOLLOW_LINKS) ? folder : null;
     }
 
     private Path requireVault() {

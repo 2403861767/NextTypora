@@ -948,6 +948,76 @@ class NoteApiIntegrationTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // BUG_BACKLOG_REAL_WORLD.md RW-P1-007：粘贴的图片默认保存在笔记旁的 <笔记名>.assets 目录（文件树中隐藏），
+    // 移动笔记时它必须跟着移动，否则笔记里的图片全部失效
+    @Test
+    void movingANoteAlsoMovesItsHiddenAssetsFolder() throws Exception {
+        configureWorkspace();
+        byte[] pngBytes = {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+        createNoteWithPastedImage(pngBytes);
+        Files.createDirectories(tempVault.resolve("日记"));
+
+        mockMvc.perform(put("/api/files/move")
+                        .header("X-Auth-Token", TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "path", "图片笔记.md",
+                                "targetFolder", "日记"
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.path").value("日记/图片笔记.md"));
+
+        assertThat(tempVault.resolve("日记/图片笔记.md")).exists();
+        assertThat(tempVault.resolve("日记/图片笔记.assets/pic.png")).hasBinaryContent(pngBytes);
+        assertThat(tempVault.resolve("图片笔记.assets")).doesNotExist();
+
+        // 前端按移动后的笔记路径解析 ![](图片笔记.assets/pic.png)，请求的就是这个地址
+        mockMvc.perform(get("/api/asset")
+                        .header("X-Auth-Token", TOKEN)
+                        .param("path", "日记/图片笔记.assets/pic.png"))
+                .andExpect(status().isOk())
+                .andExpect(content().bytes(pngBytes));
+    }
+
+    @Test
+    void movingANoteRefusesToOverwriteAnAssetsFolderAtTheTarget() throws Exception {
+        configureWorkspace();
+        byte[] pngBytes = {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+        createNoteWithPastedImage(pngBytes);
+        Files.createDirectories(tempVault.resolve("日记/图片笔记.assets"));
+        Files.writeString(tempVault.resolve("日记/图片笔记.assets/other.png"), "other note's image");
+
+        mockMvc.perform(put("/api/files/move")
+                        .header("X-Auth-Token", TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "path", "图片笔记.md",
+                                "targetFolder", "日记"
+                        ))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error", containsString("日记/图片笔记.assets")));
+
+        // 什么都没有移动：笔记和它的图片仍在一起，目标目录里原有的图片也没被覆盖
+        assertThat(tempVault.resolve("图片笔记.md")).exists();
+        assertThat(tempVault.resolve("日记/图片笔记.md")).doesNotExist();
+        assertThat(tempVault.resolve("图片笔记.assets/pic.png")).hasBinaryContent(pngBytes);
+        assertThat(tempVault.resolve("日记/图片笔记.assets/other.png")).hasContent("other note's image");
+        assertThat(tempVault.resolve("日记/图片笔记.assets/pic.png")).doesNotExist();
+    }
+
+    private void createNoteWithPastedImage(byte[] pngBytes) throws Exception {
+        CreateNoteRequest createRequest = new CreateNoteRequest();
+        createRequest.setPath("图片笔记.md");
+        createRequest.setContent("# 图片笔记\n\n![](图片笔记.assets/pic.png)\n");
+        mockMvc.perform(post("/api/note")
+                        .header("X-Auth-Token", TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createRequest)))
+                .andExpect(status().isOk());
+        Files.createDirectories(tempVault.resolve("图片笔记.assets"));
+        Files.write(tempVault.resolve("图片笔记.assets/pic.png"), pngBytes);
+    }
+
     @Test
     void exportHtmlRendersAdvancedMarkdownAndRejectsUnsafePaths() throws Exception {
         configureWorkspace();
