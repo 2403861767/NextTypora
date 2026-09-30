@@ -426,6 +426,7 @@ export default function App() {
   const [exportLoading, setExportLoading] = useState<'html' | 'pdf' | null>(null);
   const [messageApi, messageContextHolder] = message.useMessage();
   const [fileMissingDialog, setFileMissingDialog] = useState<{ path: string; content: string } | null>(null);
+  const [savingConflictCopy, setSavingConflictCopy] = useState(false);
 
   const openSeqRef = useRef(0);
   const editorRootRef = useRef<HTMLDivElement | null>(null);
@@ -1821,22 +1822,35 @@ export default function App() {
   };
 
   const handleSaveConflictCopy = async () => {
-    if (!selectedPath) return;
-    const copy = await createNote(conflictCopyPath(selectedPath), content);
-    await refreshTree();
-    setSelectedPath(copy.path);
-    setUnsupportedPreviewPath('');
-    setSelectedTreeItem({ path: copy.path, isDirectory: false });
-    setContent(copy.content);
-    setLoadedContent(copy.content);
-    setContentHash(copy.contentHash);
-    setEditorRevision((revision) => revision + 1);
-    setSaveConflict(null);
-    await window.nextTyproa?.rememberOpenedFile?.({
-      folder: workspacePath,
-      relativePath: copy.path,
-    }).catch(() => undefined);
-    messageApi.success('已保存为冲突副本');
+    if (!selectedPath || savingConflictCopy) return;
+    const originalPath = selectedPath;
+    setSavingConflictCopy(true);
+    try {
+      const copy = await createNote(conflictCopyPath(originalPath), content);
+      await refreshTree();
+      // 未保存的修改已写进副本：原标签不再算未保存（再次切回时会从磁盘重新载入），副本在新标签中打开并激活
+      setOpenTabs((prev) => prev.map((tab) => (
+        tab.path === originalPath ? { ...tab, content: tab.loadedContent, saveStatus: 'idle' as const } : tab
+      )));
+      setSelectedPath(copy.path);
+      setUnsupportedPreviewPath('');
+      setSelectedTreeItem({ path: copy.path, isDirectory: false });
+      setContent(copy.content);
+      setLoadedContent(copy.content);
+      setContentHash(copy.contentHash);
+      setEditorRevision((revision) => revision + 1);
+      setSaveConflict(null);
+      rememberOpenedNote(workspacePath, copy);
+      await window.nextTyproa?.rememberOpenedFile?.({
+        folder: workspacePath,
+        relativePath: copy.path,
+      }).catch(() => undefined);
+      messageApi.success('已保存为冲突副本');
+    } catch (e) {
+      showError(describeError(e, '保存副本失败'));
+    } finally {
+      setSavingConflictCopy(false);
+    }
   };
 
   const handleForceOverwrite = async () => {
@@ -2469,7 +2483,7 @@ export default function App() {
             <Button key="reload" onClick={() => { void handleReloadConflict(); }}>
               重新载入
             </Button>,
-            <Button key="copy" onClick={() => { void handleSaveConflictCopy(); }}>
+            <Button key="copy" loading={savingConflictCopy} onClick={() => { void handleSaveConflictCopy(); }}>
               保存副本
             </Button>,
             <Button key="force" type="primary" danger onClick={() => { void handleForceOverwrite(); }}>

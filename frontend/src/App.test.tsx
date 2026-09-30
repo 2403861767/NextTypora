@@ -369,6 +369,83 @@ describe('App (integration with mocked backend)', () => {
       pressShortcut('w');
       await waitFor(() => expect(tabTitles()).toEqual(['a.md']), { timeout: 5000 });
     }, 20000);
+
+    // BUG_BACKLOG_REAL_WORLD.md RW-P2-001：“保存副本”后编辑写进副本，但标签栏仍只显示原笔记，
+    // 原标签一直带着未保存标记（关闭它时还会拿旧 hash 保存而失败）；点击后也没有任何 loading 提示
+    describe('保存副本', () => {
+      const COPY_PATTERN = /^日记\/笔记B\.conflict-\d{8}-\d{6}\.md$/;
+
+      function copyPathsOnDisk(): string[] {
+        return [...disk.keys()].filter((path) => COPY_PATTERN.test(path));
+      }
+
+      function tabOf(path: string): HTMLElement | undefined {
+        return editorTabs().find((tab) => tab.getAttribute('title') === path);
+      }
+
+      async function saveCopy(): Promise<string> {
+        fireEvent.click(screen.getByRole('button', { name: '保存副本' }));
+        await waitFor(() => expect(isDialogOpen('检测到外部修改')).toBe(false), { timeout: 5000 });
+        expect(copyPathsOnDisk()).toHaveLength(1);
+        return copyPathsOnDisk()[0];
+      }
+
+      it('opens the copy in its own active tab, keeps typing there and leaves the original untouched', async () => {
+        await openConflict();
+
+        const copyPath = await saveCopy();
+
+        expect(disk.get(copyPath)).toBe('# 笔记B\n\n正文 MYEDIT\n');
+        await waitFor(() => expect(tabPaths()).toContain(copyPath), { timeout: 3000 });
+        expect(tabOf(copyPath)).toHaveAttribute('aria-selected', 'true');
+        expect(tabOf(NOTE_B)).toHaveAttribute('aria-selected', 'false');
+        // 未保存的修改已经写进副本：原标签不能再显示为未保存
+        expect(tabOf(NOTE_B)).not.toHaveClass('dirty');
+
+        // 等编辑器按副本重新载入后继续输入：只能写进副本，原文件保持外部版本
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        typeAtEndOfParagraph('正文 MYEDIT', ' COPYEDIT');
+        await waitFor(() => expect(disk.get(copyPath)).toBe('# 笔记B\n\n正文 MYEDIT COPYEDIT\n'), { timeout: 5000 });
+        expect(disk.get(NOTE_B)).toBe(EXTERNAL_VERSION);
+        expect(tabOf(copyPath)).toHaveAttribute('aria-selected', 'true');
+      }, 20000);
+
+      it('lets the original tab be closed afterwards without a save error or touching the external version', async () => {
+        await openConflict();
+        const copyPath = await saveCopy();
+        vi.mocked(api.saveNote).mockClear();
+
+        fireEvent.click(screen.getByRole('button', { name: '关闭 笔记B.md' }));
+        await settle();
+
+        expect(isDialogOpen('提示')).toBe(false);
+        expect(tabPaths()).not.toContain(NOTE_B);
+        expect(tabPaths()).toContain(copyPath);
+        expect(vi.mocked(api.saveNote).mock.calls.filter(([path]) => path === NOTE_B)).toEqual([]);
+        expect(disk.get(NOTE_B)).toBe(EXTERNAL_VERSION);
+      }, 20000);
+
+      it('shows a loading state while the copy is being written and ignores repeated clicks', async () => {
+        await openConflict();
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const createNote = vi.mocked(api.createNote).getMockImplementation()!;
+        vi.mocked(api.createNote).mockImplementationOnce(async (...args) => {
+          await gate;
+          return createNote(...args);
+        });
+
+        const button = screen.getByRole('button', { name: '保存副本' });
+        fireEvent.click(button);
+        await waitFor(() => expect(button).toHaveClass('ant-btn-loading'));
+        fireEvent.click(button);
+
+        release();
+        await waitFor(() => expect(isDialogOpen('检测到外部修改')).toBe(false), { timeout: 5000 });
+        expect(api.createNote).toHaveBeenCalledTimes(1);
+        expect(copyPathsOnDisk()).toHaveLength(1);
+      }, 20000);
+    });
   });
 
   // BUG_BACKLOG_REAL_WORLD.md RW-P1-003：笔记在外部被删除/重命名后，后端返回 404，
