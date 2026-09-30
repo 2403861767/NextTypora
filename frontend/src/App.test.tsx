@@ -533,4 +533,73 @@ describe('App (integration with mocked backend)', () => {
       expect(editorText()).not.toContain('SECOND VAULT');
     }, 30000);
   });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P1-006：打开当前工作区内（子目录里）的文件，会把工作区重置为该文件所在的子目录
+  describe('RW-P1-006: opening a file that is already inside the current workspace', () => {
+    const DIARY = '日记/2026-09-23.md';
+
+    async function openVault() {
+      await openApp(
+        { 'ascii-notes.md': '# ascii-notes\n\n根目录笔记\n', [DIARY]: '# 2026-09-23\n\n今天的日记\n' },
+        ['ascii-notes.md'],
+      );
+    }
+
+    async function settle(ms = 1500) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    }
+
+    async function expectOpenedInCurrentWorkspace() {
+      await waitFor(() => expect(editorText()).toContain('今天的日记'), { timeout: 5000 });
+      await settle();
+
+      // 工作区不变：不能切换到 日记 子目录
+      expect(api.setWorkspace).not.toHaveBeenCalled();
+      expect(tabPaths()).toEqual(['ascii-notes.md', DIARY]);
+      // 文件树仍是整个工作区
+      expect(screen.getAllByText('ascii-notes.md').length).toBeGreaterThan(0);
+
+      // 原有标签仍指向工作区根目录下的文件，而不是不存在的 日记/ascii-notes.md
+      fireEvent.click(editorTabs().find((tab) => tab.getAttribute('title') === 'ascii-notes.md')!);
+      await waitFor(() => expect(editorText()).toContain('根目录笔记'), { timeout: 5000 });
+      expect(isDialogOpen('提示')).toBe(false);
+    }
+
+    it('double-click / second instance with the absolute path opens it in the current workspace', async () => {
+      let openFilePath: (filePath: string) => void = () => undefined;
+      stubElectron({
+        onOpenFilePath: (callback) => {
+          openFilePath = callback;
+          return () => undefined;
+        },
+      });
+      await openVault();
+
+      await act(async () => openFilePath('D:\\vault\\日记\\2026-09-23.md'));
+
+      await expectOpenedInCurrentWorkspace();
+    }, 20000);
+
+    it('"打开文件" dialog opens it in the current workspace', async () => {
+      let menuOpenFile: () => void = () => undefined;
+      stubElectron({
+        onMenuOpenFile: (callback) => {
+          menuOpenFile = callback;
+          return () => undefined;
+        },
+        selectMarkdownFile: vi.fn(async () => ({
+          fullPath: 'D:\\vault\\日记\\2026-09-23.md',
+          dir: 'D:\\vault\\日记',
+          relativePath: '2026-09-23.md',
+        })),
+      });
+      await openVault();
+
+      await act(async () => menuOpenFile());
+
+      await expectOpenedInCurrentWorkspace();
+    }, 20000);
+  });
 });

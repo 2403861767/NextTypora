@@ -70,7 +70,7 @@ import { useSearchPanel } from './hooks/useSearchPanel';
 import type { AppThemeId, EditorTab, ImageUploadSettings, Note, PreferenceSettings, RecentFileRef, RecentWorkspaceRef, TreeNode, TreeSelection, WritingModeSettings } from './types';
 import { loadAndApplyPreferenceSettings, patchStoredAppSettings } from './utils/appSettings';
 import { windowsFileNameError, windowsPathError } from './utils/fileName';
-import { joinLocalPath, parseLocalMarkdownPath, foldersEqual } from './utils/localPath';
+import { joinLocalPath, parseLocalMarkdownPath, foldersEqual, relativePathInFolder } from './utils/localPath';
 import { scrollToHeadingLine } from './utils/headings';
 import { countDocumentWords } from './utils/wordCount';
 import { applyThemeToRoot, getThemeDefinition, scopeCustomEditorCss } from './utils/themes';
@@ -966,12 +966,18 @@ export default function App() {
     if (!targetFolder) {
       throw new Error('请先打开本地文件夹');
     }
-    const folder = !foldersEqual(targetFolder, workspacePath)
-      ? await switchWorkspace(targetFolder)
-      : targetFolder;
+    // 文件已经在当前工作区的子目录里：直接在当前工作区中打开，不能把工作区换成文件所在的子目录
+    const pathInWorkspace = !foldersEqual(targetFolder, workspacePath)
+      ? relativePathInFolder(workspacePath, joinLocalPath(targetFolder, relativePath))
+      : undefined;
+    const folder = pathInWorkspace
+      ? workspacePath
+      : !foldersEqual(targetFolder, workspacePath)
+        ? await switchWorkspace(targetFolder)
+        : targetFolder;
     if (seq !== openSeqRef.current) return;
 
-    const note = await getNote(relativePath);
+    const note = await getNote(pathInWorkspace ?? relativePath);
     if (seq !== openSeqRef.current) return;
 
     setSelectedPath(note.path);
