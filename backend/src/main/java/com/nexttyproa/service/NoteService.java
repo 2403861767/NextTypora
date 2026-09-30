@@ -95,6 +95,11 @@ public class NoteService {
             String encoding = request.getEncoding() == null || request.getEncoding().isBlank()
                     ? currentRead.encoding()
                     : request.getEncoding();
+            // GBK 等旧编码无法表示的字符（如 emoji）写入时会变成 "?"：这种内容改用 UTF-8 保存，不丢字符
+            if (!fileService.canEncode(nextContent, encoding)) {
+                audit.warn("Saving note as UTF-8 because {} cannot represent its content: {}", encoding, relativePath);
+                encoding = "UTF-8";
+            }
             boolean hasBom = request.getHasBom() == null ? currentRead.hasBom() : request.getHasBom();
             boolean existed = fileService.exists(file);
             fileService.writeFileAtomic(file, nextContent, encoding, hasBom, existed);

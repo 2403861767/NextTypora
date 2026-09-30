@@ -385,6 +385,14 @@ public class FileService {
         return value;
     }
 
+    /**
+     * Whether the encoding can write this text losslessly: {@code String.getBytes} silently replaces
+     * characters it cannot represent (e.g. emoji in GBK) with '?'.
+     */
+    public boolean canEncode(String content, String encoding) {
+        return Charset.forName(normalizeEncodingName(encoding)).newEncoder().canEncode(content == null ? "" : content);
+    }
+
     public String normalizeEncodingName(String encoding) {
         if (encoding == null || encoding.isBlank()) {
             return DEFAULT_ENCODING;

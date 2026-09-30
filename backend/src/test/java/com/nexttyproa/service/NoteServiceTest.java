@@ -146,6 +146,35 @@ class NoteServiceTest {
         assertEquals("# 标题\n修改后的内容", new String(Files.readAllBytes(file), gbk));
     }
 
+    // BUG_BACKLOG_REAL_WORLD.md RW-P2-004：GBK 无法表示的字符（如 emoji）被 String.getBytes 静默替换成 "?"，
+    // 返回的 hash 又按请求内容计算，8 秒后的轮询会把 "?" 版本载回编辑器
+    @Test
+    void saveSwitchesToUtf8WhenTheLegacyEncodingCannotRepresentTheText(@TempDir Path vaultRoot) throws Exception {
+        Path file = vaultRoot.resolve("编码/gbk.md");
+        Files.createDirectories(file.getParent());
+        Files.write(file, "# GBK 编码测试\n中文内容，用于编码检测".getBytes(Charset.forName("GBK")));
+        NoteService noteService = noteService(vaultRoot);
+        NoteDto loaded = noteService.getNote("编码/gbk.md");
+        assertEquals("GBK", loaded.getEncoding());
+
+        String edited = "# GBK 编码测试表情😀结束\n中文内容，用于编码检测";
+        NoteDto saved = noteService.saveNote(saveRequest("编码/gbk.md", edited, loaded.getContentHash(), false));
+
+        assertEquals(edited, new String(Files.readAllBytes(file), StandardCharsets.UTF_8));
+        assertEquals("UTF-8", saved.getEncoding());
+        assertEquals(fileService.hashContent(edited), saved.getContentHash());
+
+        // 重新读取（即前端轮询）得到同一内容和同一 hash：不会把编辑器里的内容换掉，也不会误报冲突
+        NoteDto reloaded = noteService.getNote("编码/gbk.md");
+        assertEquals(edited, reloaded.getContent());
+        assertEquals("UTF-8", reloaded.getEncoding());
+        assertEquals(saved.getContentHash(), reloaded.getContentHash());
+
+        String further = edited + "\n继续编辑";
+        noteService.saveNote(saveRequest("编码/gbk.md", further, saved.getContentHash(), false));
+        assertEquals(further, new String(Files.readAllBytes(file), StandardCharsets.UTF_8));
+    }
+
     @Test
     void saveUpdatesSearchIndex(@TempDir Path vaultRoot) throws Exception {
         NoteService noteService = noteService(vaultRoot);
