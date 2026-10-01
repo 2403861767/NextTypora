@@ -13,6 +13,9 @@ export default defineConfig({
   },
   base: './',
   server: {
+    // Electron dev 和 wait-on 连接的是 127.0.0.1:5173。不写 host 时 Vite 监听 localhost，
+    // Node 17+ 在 Windows 上把它解析成 ::1，127.0.0.1 上就没有服务
+    host: '127.0.0.1',
     port: 5173,
     strictPort: true,
   },
