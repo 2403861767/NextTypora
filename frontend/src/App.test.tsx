@@ -1125,4 +1125,114 @@ describe('App (integration with mocked backend)', () => {
       expect(tabTitles()).toEqual(['A', 'foo', 'bar']);
     }, 20000);
   });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P3-002：删除当前打开的笔记后，其余标签都还在，但没有任何标签被激活，
+  // 编辑区显示“打开本地 Markdown 文件”的空白占位；关闭标签页时则会自动激活相邻的标签
+  describe('RW-P3-002: deleting the open note', () => {
+    const NOTES: Record<string, string> = {
+      'a.md': '# A\n\n甲的正文\n',
+      'b.md': '# B\n\n乙的正文\n',
+      'c.md': '# C\n\n丙的正文\n',
+    };
+    const PLACEHOLDER = '打开本地 Markdown 文件';
+
+    async function settle(ms = 1500) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    }
+
+    function tabOf(path: string): HTMLElement | undefined {
+      return editorTabs().find((tab) => tab.getAttribute('title') === path);
+    }
+
+    /** 点击对话框页脚的确认按钮（不依赖按钮上的文字） */
+    function confirmDialog(dialog: HTMLElement) {
+      const buttons = dialog.querySelectorAll<HTMLButtonElement>('.ant-modal-footer button');
+      fireEvent.click(buttons[buttons.length - 1]);
+    }
+
+    /** 工具栏的“删除笔记”：删除当前打开的笔记并确认（浏览器环境没有回收站，是永久删除） */
+    async function deleteOpenNote() {
+      fireEvent.click(screen.getByTitle('删除笔记'));
+      await waitFor(() => expect(isDialogOpen('删除文件')).toBe(true), { timeout: 5000 });
+      confirmDialog(openDialog('删除文件')!);
+    }
+
+    it('activates the tab that takes the deleted tab\'s place and shows its note', async () => {
+      await openApp(NOTES, ['a.md', 'b.md', 'c.md'], 'b.md');
+      expect(editorText()).toContain('乙的正文');
+
+      await deleteOpenNote();
+
+      await waitFor(() => expect(disk.has('b.md')).toBe(false), { timeout: 5000 });
+      await settle();
+      expect(tabPaths()).toEqual(['a.md', 'c.md']);
+      expect(tabOf('c.md')).toHaveAttribute('aria-selected', 'true');
+      expect(tabOf('a.md')).toHaveAttribute('aria-selected', 'false');
+      await waitFor(() => expect(editorText()).toContain('丙的正文'), { timeout: 5000 });
+      expect(screen.queryByText(PLACEHOLDER)).toBeNull();
+      // 重启后也恢复到这个标签，而不是没有激活任何标签
+      expect(storedSettings().activeTabPath).toBe('c.md');
+    }, 20000);
+
+    it('falls back to the previous tab when the last tab is deleted', async () => {
+      await openApp(NOTES, ['a.md', 'b.md', 'c.md'], 'c.md');
+
+      await deleteOpenNote();
+
+      await waitFor(() => expect(disk.has('c.md')).toBe(false), { timeout: 5000 });
+      await settle();
+      expect(tabPaths()).toEqual(['a.md', 'b.md']);
+      expect(tabOf('b.md')).toHaveAttribute('aria-selected', 'true');
+      await waitFor(() => expect(editorText()).toContain('乙的正文'), { timeout: 5000 });
+      expect(storedSettings().activeTabPath).toBe('b.md');
+    }, 20000);
+
+    it('deleting a folder that holds the open note activates the nearest tab outside the folder', async () => {
+      await openApp(
+        { ...NOTES, 'docs/x.md': '# X\n\n文件夹里的甲\n', 'docs/y.md': '# Y\n\n文件夹里的乙\n' },
+        ['a.md', 'docs/x.md', 'docs/y.md', 'b.md'],
+        'docs/x.md',
+      );
+
+      fireEvent.contextMenu(within(screen.getByLabelText('文件树根目录')).getByText('docs').closest('button')!);
+      fireEvent.click(await screen.findByText('删除'));
+      await waitFor(() => expect(isDialogOpen('删除文件夹')).toBe(true), { timeout: 5000 });
+      confirmDialog(openDialog('删除文件夹')!);
+
+      await waitFor(() => expect(workspaceFiles().some((path) => path.startsWith('docs/'))).toBe(false), { timeout: 5000 });
+      await settle();
+      expect(tabPaths()).toEqual(['a.md', 'b.md']);
+      expect(tabOf('b.md')).toHaveAttribute('aria-selected', 'true');
+      await waitFor(() => expect(editorText()).toContain('乙的正文'), { timeout: 5000 });
+    }, 20000);
+
+    it('deleting the only open note still leaves the empty placeholder', async () => {
+      await openApp(NOTES, ['a.md']);
+
+      await deleteOpenNote();
+
+      await waitFor(() => expect(disk.has('a.md')).toBe(false), { timeout: 5000 });
+      await settle();
+      expect(screen.queryByRole('tablist', { name: '打开的文档' })).toBeNull();
+      expect(await screen.findByText(PLACEHOLDER)).toBeInTheDocument();
+      expect(storedSettings().openTabs).toEqual([]);
+    }, 20000);
+
+    it('deleting a note that is not the open one keeps the current tab and editor', async () => {
+      await openApp(NOTES, ['a.md', 'b.md', 'c.md'], 'a.md');
+
+      fireEvent.contextMenu(within(screen.getByLabelText('文件树根目录')).getByText('b.md').closest('button')!);
+      fireEvent.click(await screen.findByText('删除'));
+      await waitFor(() => expect(isDialogOpen('删除文件')).toBe(true), { timeout: 5000 });
+      confirmDialog(openDialog('删除文件')!);
+
+      await waitFor(() => expect(disk.has('b.md')).toBe(false), { timeout: 5000 });
+      await settle();
+      expect(tabPaths()).toEqual(['a.md', 'c.md']);
+      expect(tabOf('a.md')).toHaveAttribute('aria-selected', 'true');
+      expect(editorText()).toContain('甲的正文');
+    }, 20000);
+  });
 });

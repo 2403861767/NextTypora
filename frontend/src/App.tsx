@@ -1805,14 +1805,23 @@ export default function App() {
         await refreshTree();
       }
       const nextTabs = openTabs.filter((tab) => !isPathAffected(tab.path, target));
+      // 删除的是当前笔记：和关闭标签页一样，激活顶替它位置的右侧标签，它在最右时取最后一个
+      const openIndex = openTabs.findIndex((tab) => tab.path === selectedPath);
+      const keptBefore = openTabs.slice(0, Math.max(openIndex, 0)).filter((tab) => !isPathAffected(tab.path, target)).length;
+      const nextActive = deletesMarkdown ? nextTabs[Math.min(keptBefore, nextTabs.length - 1)] : undefined;
       setOpenTabs(nextTabs);
       void patchStoredAppSettings({
         openTabs: nextTabs,
-        activeTabPath: activeTabPath && isPathAffected(activeTabPath, target) ? undefined : activeTabPath,
+        activeTabPath: nextActive
+          ? nextActive.path
+          : activeTabPath && isPathAffected(activeTabPath, target) ? undefined : activeTabPath,
       }).catch(() => undefined);
       messageApi.success(trashItem ? '已移到回收站' : '删除成功');
 
-      if (deletesMarkdown) {
+      if (deletesMarkdown && nextActive) {
+        setActiveTabPath(nextActive.path);
+        await handleSelectTab(nextActive.path);
+      } else if (deletesMarkdown) {
         clearMarkdownState();
         setActiveTabPath(undefined);
         setSelectedTreeItem(null);
