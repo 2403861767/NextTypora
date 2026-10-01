@@ -106,6 +106,7 @@ vi.mock('./api', async (importOriginal) => {
       writeFile(absolutePathOf(path), content);
       return noteOf(path, content);
     }),
+    createFolder: vi.fn(async (path: string) => ({ path, directory: true })),
     // 后端的 DELETE /api/files：永久删除文件，或递归删除整个文件夹
     deletePath: vi.fn(async (path: string) => {
       const removed = takeFromWorkspace(path);
@@ -984,6 +985,81 @@ describe('App (integration with mocked backend)', () => {
       await waitFor(() => expect(disk.has(NOTE)).toBe(false), { timeout: 5000 });
       await settle();
       expect(tabPaths()).toEqual(['a.md']);
+    }, 20000);
+  });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P2-009：界面上无法在工作区根目录新建文件夹：
+  // 侧栏顶部的“…”（侧边栏选项）按钮点了没反应，文件树空白处右键也没有菜单
+  describe('RW-P2-009: creating at the workspace root', () => {
+    const NESTED_NOTE = '日记/2026-09-23.md';
+
+    beforeEach(() => {
+      vi.mocked(api.createFolder).mockClear();
+    });
+
+    /** 打开子目录里的一篇笔记：此时文件树的选中项在“日记”里，工具栏的新建会建在“日记”下面 */
+    async function openNestedNote() {
+      await openApp({ [NESTED_NOTE]: '# 日记\n\n今天\n', 'a.md': '# A\n\n另一篇\n' }, [NESTED_NOTE]);
+    }
+
+    async function submitCreateDialog(title: string, name: string) {
+      await waitFor(() => expect(isDialogOpen(title)).toBe(true), { timeout: 5000 });
+      const dialog = openDialog(title)!;
+      fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: name } });
+      fireEvent.click(within(dialog).getByRole('button', { name: /创\s*建/ }));
+    }
+
+    it('"…" (侧边栏选项) → 新建文件夹 creates the folder at the workspace root', async () => {
+      await openNestedNote();
+
+      fireEvent.click(screen.getByRole('button', { name: '侧边栏选项' }));
+      fireEvent.click(await screen.findByText('新建文件夹'));
+      await submitCreateDialog('新建文件夹', '新目录');
+
+      await waitFor(() => expect(api.createFolder).toHaveBeenCalledTimes(1), { timeout: 5000 });
+      expect(api.createFolder).toHaveBeenCalledWith('新目录');
+    }, 20000);
+
+    it('"…" (侧边栏选项) → 新建笔记 creates the note at the workspace root', async () => {
+      await openNestedNote();
+
+      fireEvent.click(screen.getByRole('button', { name: '侧边栏选项' }));
+      fireEvent.click(await screen.findByText('新建笔记'));
+      await submitCreateDialog('新建 Markdown 文件', '根目录笔记');
+
+      await waitFor(() => expect(disk.has('根目录笔记.md')).toBe(true), { timeout: 5000 });
+      expect(disk.has('日记/根目录笔记.md')).toBe(false);
+    }, 20000);
+
+    it('right-clicking blank space in the file tree panel → 新建文件夹 creates it at the workspace root', async () => {
+      await openNestedNote();
+
+      fireEvent.contextMenu(document.querySelector('.sidebar-body')!);
+      fireEvent.click(await screen.findByText('新建文件夹'));
+      await submitCreateDialog('新建文件夹', '新目录');
+
+      await waitFor(() => expect(api.createFolder).toHaveBeenCalledTimes(1), { timeout: 5000 });
+      expect(api.createFolder).toHaveBeenCalledWith('新目录');
+    }, 20000);
+
+    it('right-clicking a folder still creates inside that folder', async () => {
+      await openNestedNote();
+
+      fireEvent.contextMenu(within(screen.getByLabelText('文件树根目录')).getByText('日记').closest('button')!);
+      fireEvent.click(await screen.findByText('新建文件夹'));
+      await submitCreateDialog('新建文件夹', '子目录');
+
+      await waitFor(() => expect(api.createFolder).toHaveBeenCalledTimes(1), { timeout: 5000 });
+      expect(api.createFolder).toHaveBeenCalledWith('日记/子目录');
+    }, 20000);
+
+    it('the toolbar 新建笔记 still creates next to the selected note', async () => {
+      await openNestedNote();
+
+      fireEvent.click(screen.getByTitle('新建笔记 (Ctrl+N)'));
+      await submitCreateDialog('新建 Markdown 文件', '同目录笔记');
+
+      await waitFor(() => expect(disk.has('日记/同目录笔记.md')).toBe(true), { timeout: 5000 });
     }, 20000);
   });
 });

@@ -2303,6 +2303,9 @@ export default function App() {
             tab={sidebarTab}
             onTabChange={setSidebarTab}
             workspacePath={workspacePath}
+            onCreateMarkdown={() => { void handleCreateMarkdown(''); }}
+            onCreateFolder={() => { void handleCreateFolder(''); }}
+            onRefresh={() => { void refreshWorkspaceTree(); }}
             filesContent={
               <FileTree
                 nodes={tree}

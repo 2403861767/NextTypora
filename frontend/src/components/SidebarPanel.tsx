@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Dropdown, type MenuProps } from 'antd';
 import { AnimatePresence, motion } from 'motion/react';
 import { panelRevealMotion } from '../utils/motionPresets';
 
@@ -13,6 +14,10 @@ interface SidebarPanelProps {
   outlineContent: ReactNode;
   searchContent?: ReactNode;
   workspacePath?: string;
+  /** 在工作区根目录新建笔记 / 文件夹、刷新文件树：“…”按钮和文件树空白处的右键菜单共用 */
+  onCreateMarkdown?: () => void;
+  onCreateFolder?: () => void;
+  onRefresh?: () => void;
 }
 
 export function SidebarPanel({
@@ -24,6 +29,9 @@ export function SidebarPanel({
   outlineContent,
   searchContent,
   workspacePath,
+  onCreateMarkdown,
+  onCreateFolder,
+  onRefresh,
 }: SidebarPanelProps) {
   const bodyContent =
     tab === 'files' ? filesContent :
@@ -31,11 +39,27 @@ export function SidebarPanel({
     tab === 'search' ? searchContent :
     outlineContent;
 
+  const rootMenu: MenuProps = {
+    items: [
+      { key: 'create-markdown', label: '新建笔记', disabled: !onCreateMarkdown },
+      { key: 'create-folder', label: '新建文件夹', disabled: !onCreateFolder },
+      { type: 'divider' },
+      { key: 'refresh', label: '刷新文件树', disabled: !onRefresh },
+    ],
+    onClick: ({ key }) => {
+      if (key === 'create-markdown') onCreateMarkdown?.();
+      if (key === 'create-folder') onCreateFolder?.();
+      if (key === 'refresh') onRefresh?.();
+    },
+  };
+
   return (
     <aside className={`typora-sidebar sidebar-unified ${open ? 'open' : 'closed'}`}>
       <div className="sidebar-brand-row">
         <span className="sidebar-brand-title">Workspace</span>
-        <button type="button" className="sidebar-more-btn" title="侧边栏选项" aria-label="侧边栏选项">...</button>
+        <Dropdown menu={rootMenu} trigger={['click']} placement="bottomRight">
+          <button type="button" className="sidebar-more-btn" title="侧边栏选项" aria-label="侧边栏选项">...</button>
+        </Dropdown>
       </div>
       <div className="sidebar-tabs" role="tablist" aria-label="侧边栏">
         <button
@@ -76,13 +100,16 @@ export function SidebarPanel({
         </button>
       </div>
 
-      <div className="sidebar-body" role="tabpanel">
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div key={tab} className="sidebar-body-motion" {...panelRevealMotion}>
-            {bodyContent}
-          </motion.div>
-        </AnimatePresence>
-      </div>
+      {/* 文件树空白处的右键菜单挂在整个面板上：只有它能铺满侧栏，树的节点自己的右键菜单不会冒泡到这里 */}
+      <Dropdown menu={rootMenu} trigger={tab === 'files' ? ['contextMenu'] : []}>
+        <div className="sidebar-body" role="tabpanel">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div key={tab} className="sidebar-body-motion" {...panelRevealMotion}>
+              {bodyContent}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </Dropdown>
 
       {workspacePath && (tab === 'files' || tab === 'file-list') && (
         <div className="sidebar-footer" title={workspacePath}>

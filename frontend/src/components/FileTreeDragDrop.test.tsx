@@ -158,6 +158,40 @@ describe('FileTree drag and drop', () => {
     expect(onMove).not.toHaveBeenCalledWith({ path: 'parent/note.md', isDirectory: false }, '');
   });
 
+  // BUG_BACKLOG_REAL_WORLD.md RW-P2-009：侧栏空白处有自己的右键菜单（在根目录新建），
+  // 在节点上右键只应打开节点自己的菜单，不能再冒泡出去把空白处的菜单也打开
+  it('right-clicking a node does not bubble to the surrounding panel, right-clicking blank space does', () => {
+    const onPanelContextMenu = vi.fn();
+    render(
+      <div onContextMenu={onPanelContextMenu}>
+        <FileTree
+          nodes={[
+            { name: 'note.md', path: 'note.md', directory: false, children: [] },
+            { name: 'Archive', path: 'archive', directory: true, children: [] },
+          ]}
+          selectedTreeItem={null}
+          expandedFolders={new Set()}
+          onExpandedFoldersChange={vi.fn()}
+          onSelectFile={vi.fn()}
+          onSelectFolder={vi.fn()}
+          onHighlightSelection={vi.fn()}
+          onCreateFolder={vi.fn()}
+          onCreateMarkdown={vi.fn()}
+          onRename={vi.fn()}
+          onDelete={vi.fn()}
+          onMove={vi.fn()}
+        />
+      </div>,
+    );
+
+    fireEvent.contextMenu(screen.getByText('note.md').closest('button')!);
+    fireEvent.contextMenu(screen.getByText('Archive').closest('button')!);
+    expect(onPanelContextMenu).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(screen.getByLabelText('文件树根目录'));
+    expect(onPanelContextMenu).toHaveBeenCalledTimes(1);
+  });
+
   it('invokes onMoveRequest from the right-click move-to menu item', async () => {
     const onMoveRequest = vi.fn<MoveRequestHandler>();
     renderTree(

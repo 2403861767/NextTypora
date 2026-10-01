@@ -9,7 +9,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import { Dropdown, type MenuProps } from 'antd';
-import { useMemo, useState, type DragEvent, type KeyboardEvent } from 'react';
+import { useMemo, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from 'react';
 import type { TreeNode, TreeSelection } from '../types';
 
 export type FileTreeSortMode = 'name' | 'updatedAt' | 'type';
@@ -202,6 +202,12 @@ function TreeItem({
     if (key === 'refresh') void onRefresh?.();
   };
 
+  // 只打开这个节点自己的菜单：不冒泡到侧栏，那里空白处的右键菜单是“在根目录新建”
+  const handleContextMenu = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    onHighlightSelection(selection);
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === 'F2') {
       event.preventDefault();
@@ -257,7 +263,7 @@ function TreeItem({
             onDragEnd={onDragEnd}
             onDragOver={(event) => onDragOverFolder(pathKey, event)}
             onDrop={(event) => onDropOnFolder(pathKey, event)}
-            onContextMenu={() => onHighlightSelection(selection)}
+            onContextMenu={handleContextMenu}
             onKeyDown={handleKeyDown}
             onClick={(event) => {
               if ((event.target as HTMLElement).closest('.tree-caret-hitbox')) {
@@ -342,7 +348,7 @@ function TreeItem({
         }}
         onDragEnd={onDragEnd}
         onClick={() => onSelectFile(node.path)}
-        onContextMenu={() => onHighlightSelection(selection)}
+        onContextMenu={handleContextMenu}
         onKeyDown={handleKeyDown}
         title={absolutePath || node.path}
       >
