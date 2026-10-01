@@ -12,6 +12,7 @@ const {
   sanitizeSaveDialogOptions,
   sanitizePicGoConfig,
   sanitizePicGoUpload,
+  resolveTrashTarget,
 } = require('./ipcValidation');
 
 const isDev = !app.isPackaged;
@@ -828,6 +829,24 @@ ipcMain.handle('file:revealInExplorer', async (_event, targetPath) => {
   }
 
   shell.showItemInFolder(normalizedPath);
+});
+
+// 当前工作区以后端为准：渲染进程不可信，不能由它告诉主进程工作区在哪里
+async function fetchWorkspaceRoot() {
+  const response = await fetch(`http://127.0.0.1:${backendConfig.port}/api/workspace`, {
+    headers: { 'X-Auth-Token': backendConfig.token },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) {
+    throw new Error(`无法确认当前工作区（HTTP ${response.status}）。`);
+  }
+  return (await response.json()).path;
+}
+
+// 删除走系统回收站（可以恢复）。渲染进程只传工作区内的相对路径
+ipcMain.handle('file:trashItem', async (_event, relativePath) => {
+  const target = resolveTrashTarget(await fetchWorkspaceRoot(), relativePath);
+  await shell.trashItem(target);
 });
 
 ipcMain.handle('export:pdf', async (_event, payload) => {

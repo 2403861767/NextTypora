@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld('nextTyproa', {
   },
   notifyFlushSaveDone: (ok) => ipcRenderer.invoke('app:flush-save-done', { ok: ok !== false }),
   revealInExplorer: (targetPath) => ipcRenderer.invoke('file:revealInExplorer', targetPath),
+  trashItem: (relativePath) => ipcRenderer.invoke('file:trashItem', relativePath),
   testPicGoConnection: (config) => ipcRenderer.invoke('picgo:heartbeat', config),
   uploadToPicGo: (payload) => ipcRenderer.invoke('picgo:upload', payload),
   listThemes: () => ipcRenderer.invoke('themes:list'),

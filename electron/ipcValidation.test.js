@@ -10,10 +10,44 @@ const {
   sanitizeSaveDialogOptions,
   sanitizePicGoConfig,
   sanitizePicGoUpload,
+  resolveTrashTarget,
 } = require('./ipcValidation');
 const { loadSettings, patchSettings } = require('./settings');
 
 const workspace = path.resolve('vault-中文');
+
+// Node 24 的 fs.rmSync 在 Windows 的中文路径上可能什么都不删，这里逐项删除
+function removeTree(target) {
+  const stat = fs.lstatSync(target, { throwIfNoEntry: false });
+  if (!stat) return;
+  if (stat.isDirectory() && !stat.isSymbolicLink()) {
+    for (const entry of fs.readdirSync(target)) removeTree(path.join(target, entry));
+    fs.rmdirSync(target);
+  } else if (stat.isSymbolicLink() && process.platform === 'win32') {
+    // 目录联接（junction）在 Windows 上要按目录删除
+    try {
+      fs.rmdirSync(target);
+    } catch {
+      fs.unlinkSync(target);
+    }
+  } else {
+    fs.unlinkSync(target);
+  }
+}
+
+/** 临时工作区：日记/图片笔记.md、项目2026/（含备份目录）以及工作区外的一个文件 */
+function trashFixture(t) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nexttyproa-trash-'));
+  t.after(() => removeTree(base));
+  const vault = path.join(base, 'vault');
+  fs.mkdirSync(path.join(vault, '日记'), { recursive: true });
+  fs.mkdirSync(path.join(vault, '项目2026', '.nexttyproa-backups'), { recursive: true });
+  fs.writeFileSync(path.join(vault, '日记', '图片笔记.md'), '# 图片笔记');
+  fs.writeFileSync(path.join(vault, '项目2026', '需求 v1.2.md'), '# 需求');
+  fs.mkdirSync(path.join(base, 'outside'));
+  fs.writeFileSync(path.join(base, 'outside', 'secret.md'), 'secret');
+  return { base, vault };
+}
 
 test('settings patch keeps every field the renderer legitimately sends', () => {
   const patch = {
@@ -188,4 +222,62 @@ test('PicGo upload requires binary data and sanitizes filename and MIME type', (
   assert.equal(sanitizePicGoUpload({ buffer: new Uint8Array(1) }).filename, 'image.png');
   assert.throws(() => sanitizePicGoUpload({ buffer: 'AAAA' }), TypeError);
   assert.throws(() => sanitizePicGoUpload({ buffer: [1, 2, 3] }), TypeError);
+});
+
+// BUG_BACKLOG_REAL_WORLD.md RW-P2-008：删除改为移到系统回收站，主进程只接受当前工作区之内的相对路径
+test('trash target resolves a workspace-relative file or folder to its absolute path', (t) => {
+  const { vault } = trashFixture(t);
+
+  assert.equal(resolveTrashTarget(vault, '日记/图片笔记.md'), path.join(vault, '日记', '图片笔记.md'));
+  assert.equal(resolveTrashTarget(vault, '项目2026'), path.join(vault, '项目2026'));
+  assert.equal(resolveTrashTarget(`${vault}${path.sep}`, '项目2026/需求 v1.2.md'), path.join(vault, '项目2026', '需求 v1.2.md'));
+});
+
+test('trash target rejects anything that is not strictly inside the workspace', (t) => {
+  const { base, vault } = trashFixture(t);
+
+  const escapes = [
+    '',
+    '   ',
+    '.',
+    '日记/..',
+    '..',
+    '../outside/secret.md',
+    '日记/../../outside/secret.md',
+    path.join(base, 'outside', 'secret.md'),
+    path.join(vault, '日记', '图片笔记.md'),
+    '日记/图片笔记.md\0.txt',
+    42,
+    null,
+    { path: '日记/图片笔记.md' },
+  ];
+  for (const relativePath of escapes) {
+    assert.throws(() => resolveTrashTarget(vault, relativePath), TypeError, JSON.stringify(relativePath));
+  }
+
+  assert.throws(() => resolveTrashTarget('', '日记/图片笔记.md'), TypeError);
+  assert.throws(() => resolveTrashTarget(undefined, '日记/图片笔记.md'), TypeError);
+  assert.throws(() => resolveTrashTarget('relative-vault', '日记/图片笔记.md'), TypeError);
+});
+
+test('trash target must exist', (t) => {
+  const { vault } = trashFixture(t);
+
+  assert.throws(() => resolveTrashTarget(vault, '日记/不存在.md'), /路径不存在/);
+  assert.throws(() => resolveTrashTarget(vault, '没有这个目录/a.md'), /路径不存在/);
+});
+
+test('trash target refuses symbolic links and junctions, which may point outside the workspace', (t) => {
+  const { base, vault } = trashFixture(t);
+  const link = path.join(vault, 'link');
+  try {
+    fs.symlinkSync(path.join(base, 'outside'), link, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (error) {
+    t.skip(`cannot create a link on this machine: ${error.message}`);
+    return;
+  }
+
+  assert.throws(() => resolveTrashTarget(vault, 'link/secret.md'), TypeError);
+  assert.throws(() => resolveTrashTarget(vault, 'link'), TypeError);
+  assert.equal(fs.existsSync(path.join(base, 'outside', 'secret.md')), true);
 });

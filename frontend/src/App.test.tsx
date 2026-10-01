@@ -39,6 +39,19 @@ function workspaceFiles(): string[] {
     .map((path) => path.slice(root.length));
 }
 
+/** 把当前工作区里的一个文件或整个文件夹从“磁盘”上拿走，返回被拿走的内容（相对路径 → 内容） */
+function takeFromWorkspace(relativePath: string): Map<string, string> {
+  const taken = new Map<string, string>();
+  for (const path of workspaceFiles()) {
+    if (path !== relativePath && !path.startsWith(`${relativePath}/`)) continue;
+    const absolutePath = absolutePathOf(path);
+    taken.set(path, readFile(absolutePath) ?? '');
+    if (absolutePath.startsWith(`${MAIN_VAULT}/`)) disk.delete(path);
+    else backend.external.delete(absolutePath);
+  }
+  return taken;
+}
+
 function hashOf(content: string): string {
   return `hash:${content.length}:${content}`;
 }
@@ -93,6 +106,12 @@ vi.mock('./api', async (importOriginal) => {
       writeFile(absolutePathOf(path), content);
       return noteOf(path, content);
     }),
+    // 后端的 DELETE /api/files：永久删除文件，或递归删除整个文件夹
+    deletePath: vi.fn(async (path: string) => {
+      const removed = takeFromWorkspace(path);
+      if (removed.size === 0) throw new actual.ApiError(`Path not found: ${path}`, 404, { error: 'Path not found' });
+      return { path, directory: !removed.has(path) };
+    }),
   };
 });
 
@@ -100,6 +119,8 @@ function treeOf(): TreeNode[] {
   const root: TreeNode[] = [];
   for (const path of workspaceFiles().sort()) {
     const parts = path.split('/');
+    // 和真实后端一样，文件树里不出现以 . 开头的条目（如 .nexttyproa-backups）
+    if (parts.some((name) => name.startsWith('.'))) continue;
     let level = root;
     parts.forEach((name, index) => {
       const nodePath = parts.slice(0, index + 1).join('/');
@@ -806,6 +827,163 @@ describe('App (integration with mocked backend)', () => {
       await waitFor(() => expect(editorText()).not.toContain(PLACEHOLDER), { timeout: 3000 });
       await waitFor(() => expect(disk.get(NOTE)).toContain('会议纪要.assets/1-1.png'), { timeout: 5000 });
       expect(isDialogOpen('提示')).toBe(false);
+    }, 20000);
+  });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P2-008：删除是永久删除（确认框写着“此操作不可撤销”），没有回收站；
+  // 删除文件夹时，里面的 .nexttyproa-backups 备份也一起被永久删掉
+  describe('RW-P2-008: deleting notes and folders', () => {
+    const NOTE = '日记/图片笔记.md';
+    const FOLDER = '项目2026';
+    const BACKUP = `${FOLDER}/.nexttyproa-backups/需求 v1.2.md.2026-09-25T000000-000Z.bak`;
+    const VAULT: Record<string, string> = {
+      [NOTE]: '# 图片笔记\n\n正文\n',
+      [`${FOLDER}/需求 v1.2.md`]: '# 需求\n\n内容\n',
+      [`${FOLDER}/子目录/深层笔记.md`]: '# 深层\n\n内容\n',
+      [BACKUP]: '# 需求\n\n旧版本\n',
+      'a.md': '# A\n\n另一篇\n',
+    };
+    /** 系统回收站的替身：Electron 的 shell.trashItem 把文件从磁盘移到这里，之后还能找回 */
+    const recycleBin = new Map<string, string>();
+
+    beforeEach(() => {
+      recycleBin.clear();
+      vi.mocked(api.deletePath).mockClear();
+    });
+
+    function stubRecycleBin(failure?: Error) {
+      const trashItem = vi.fn(async (relativePath: string) => {
+        if (failure) throw failure;
+        takeFromWorkspace(relativePath).forEach((content, path) => recycleBin.set(path, content));
+      });
+      stubElectron({ trashItem });
+      return trashItem;
+    }
+
+    async function settle(ms = 1500) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    }
+
+    /** 工具栏的“删除笔记”：删除当前打开的笔记 */
+    async function requestDeleteOfOpenNote(): Promise<HTMLElement> {
+      fireEvent.click(screen.getByTitle('删除笔记'));
+      await waitFor(() => expect(isDialogOpen('删除文件')).toBe(true), { timeout: 5000 });
+      return openDialog('删除文件')!;
+    }
+
+    /** 文件树右键菜单的“删除” */
+    async function requestDeleteOfFolder(): Promise<HTMLElement> {
+      fireEvent.contextMenu(screen.getByText(FOLDER).closest('button')!);
+      fireEvent.click(await screen.findByText('删除'));
+      await waitFor(() => expect(isDialogOpen('删除文件夹')).toBe(true), { timeout: 5000 });
+      return openDialog('删除文件夹')!;
+    }
+
+    /** 点击对话框页脚的确认按钮（不依赖按钮上的文字） */
+    function confirm(dialog: HTMLElement) {
+      const buttons = dialog.querySelectorAll<HTMLButtonElement>('.ant-modal-footer button');
+      fireEvent.click(buttons[buttons.length - 1]);
+    }
+
+    it('in the desktop app the confirmation offers the recycle bin instead of an irreversible delete', async () => {
+      stubRecycleBin();
+      await openApp(VAULT, [NOTE, 'a.md']);
+
+      const dialog = await requestDeleteOfOpenNote();
+
+      expect(dialog.textContent).toContain(NOTE);
+      expect(dialog.textContent).toContain('回收站');
+      expect(dialog.textContent).not.toContain('不可撤销');
+    }, 20000);
+
+    it('deleting the open note moves it to the recycle bin instead of deleting it permanently', async () => {
+      const trashItem = stubRecycleBin();
+      await openApp(VAULT, [NOTE, 'a.md']);
+      const refreshesBefore = vi.mocked(api.refreshWorkspace).mock.calls.length;
+
+      confirm(await requestDeleteOfOpenNote());
+
+      await waitFor(() => expect(disk.has(NOTE)).toBe(false), { timeout: 5000 });
+      expect(trashItem.mock.calls).toEqual([[NOTE]]);
+      expect(recycleBin.get(NOTE)).toBe(VAULT[NOTE]);
+      expect(api.deletePath).not.toHaveBeenCalled();
+      // 让后端重新同步文件树和搜索索引（被移走的笔记不再出现在搜索结果里）
+      await waitFor(() => expect(vi.mocked(api.refreshWorkspace).mock.calls.length).toBeGreaterThan(refreshesBefore), { timeout: 2000 });
+      await settle();
+      expect(tabPaths()).toEqual(['a.md']);
+      expect(within(screen.getByLabelText('文件树根目录')).queryByText('图片笔记.md')).toBeNull();
+    }, 20000);
+
+    it('deleting a folder moves the whole folder to the recycle bin, backups included', async () => {
+      const trashItem = stubRecycleBin();
+      await openApp(VAULT, ['a.md']);
+
+      confirm(await requestDeleteOfFolder());
+
+      await waitFor(() => expect(workspaceFiles().some((path) => path.startsWith(`${FOLDER}/`))).toBe(false), { timeout: 5000 });
+      expect(trashItem.mock.calls).toEqual([[FOLDER]]);
+      expect(api.deletePath).not.toHaveBeenCalled();
+      expect([...recycleBin.keys()].sort()).toEqual([BACKUP, `${FOLDER}/子目录/深层笔记.md`, `${FOLDER}/需求 v1.2.md`].sort());
+      expect(recycleBin.get(BACKUP)).toBe(VAULT[BACKUP]);
+      await settle(300);
+      // 只看文件树：已关闭的确认框（停在离场动画）里还留着文件夹名
+      expect(within(screen.getByLabelText('文件树根目录')).queryByText(FOLDER)).toBeNull();
+    }, 20000);
+
+    it('when the recycle bin is unavailable, nothing is deleted until the user confirms a permanent delete', async () => {
+      const trashItem = stubRecycleBin(new Error('Failed to move item to trash'));
+      await openApp(VAULT, [NOTE, 'a.md']);
+
+      confirm(await requestDeleteOfOpenNote());
+
+      await waitFor(() => expect(trashItem).toHaveBeenCalledTimes(1), { timeout: 5000 });
+      await waitFor(() => expect(openDialog('删除文件')?.textContent ?? '').toContain('永久删除'), { timeout: 5000 });
+      const dialog = openDialog('删除文件')!;
+      expect(dialog.textContent).toContain('Failed to move item to trash');
+      expect(dialog.textContent).toContain('不可撤销');
+      expect(disk.get(NOTE)).toBe(VAULT[NOTE]);
+      expect(api.deletePath).not.toHaveBeenCalled();
+
+      confirm(dialog);
+
+      await waitFor(() => expect(api.deletePath).toHaveBeenCalledWith(NOTE), { timeout: 5000 });
+      await waitFor(() => expect(disk.has(NOTE)).toBe(false), { timeout: 5000 });
+      expect(trashItem).toHaveBeenCalledTimes(1);
+      expect(recycleBin.size).toBe(0);
+    }, 20000);
+
+    it('cancelling after a recycle bin failure keeps the note, and the next delete tries the recycle bin again', async () => {
+      const trashItem = stubRecycleBin(new Error('Failed to move item to trash'));
+      await openApp(VAULT, [NOTE, 'a.md']);
+      confirm(await requestDeleteOfOpenNote());
+      await waitFor(() => expect(openDialog('删除文件')?.textContent ?? '').toContain('永久删除'), { timeout: 5000 });
+
+      fireEvent.click(within(openDialog('删除文件')!).getByRole('button', { name: /取\s*消/ }));
+      await settle(500);
+
+      expect(disk.get(NOTE)).toBe(VAULT[NOTE]);
+      expect(api.deletePath).not.toHaveBeenCalled();
+      const dialog = await requestDeleteOfOpenNote();
+      expect(dialog.textContent).toContain('回收站');
+      expect(dialog.textContent).not.toContain('永久删除');
+      confirm(dialog);
+      await waitFor(() => expect(trashItem).toHaveBeenCalledTimes(2), { timeout: 5000 });
+    }, 20000);
+
+    it('in the browser (no Electron) delete stays permanent and says so', async () => {
+      await openApp(VAULT, [NOTE, 'a.md']);
+
+      const dialog = await requestDeleteOfOpenNote();
+      expect(dialog.textContent).toContain('不可撤销');
+      expect(dialog.textContent).not.toContain('回收站');
+      confirm(dialog);
+
+      await waitFor(() => expect(api.deletePath).toHaveBeenCalledWith(NOTE), { timeout: 5000 });
+      await waitFor(() => expect(disk.has(NOTE)).toBe(false), { timeout: 5000 });
+      await settle();
+      expect(tabPaths()).toEqual(['a.md']);
     }, 20000);
   });
 });

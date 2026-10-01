@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 
 // 渲染进程视为不可信：IPC 入参只接受白名单内、类型正确的数据，其余一律丢弃或拒绝
@@ -133,6 +134,33 @@ function sanitizeOpenedFile(payload) {
   return SETTINGS_FIELDS.lastOpenedFile(payload, 'openedFile');
 }
 
+/**
+ * Resolves a workspace-relative path from the renderer to the absolute path that may be moved to the
+ * recycle bin. Same rules as the backend's FileService.resolveSafe: the target must be strictly inside
+ * the workspace (never the workspace itself) and no segment on the way may be a symbolic link or junction.
+ */
+function resolveTrashTarget(workspaceRoot, relativePath) {
+  const root = path.resolve(absolutePath(workspaceRoot, 'workspace'));
+  const relative = pathString(relativePath, 'trash.path');
+  if (!relative.trim() || relative.includes('\0')) throw invalid('trash.path', 'expected a non-empty path');
+  if (path.isAbsolute(relative)) throw invalid('trash.path', 'expected a path relative to the workspace');
+
+  const target = path.resolve(root, relative);
+  const inside = path.relative(root, target);
+  if (!inside || inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) {
+    throw invalid('trash.path', 'expected a path inside the workspace');
+  }
+
+  let current = root;
+  for (const segment of inside.split(path.sep)) {
+    current = path.join(current, segment);
+    const stat = fs.lstatSync(current, { throwIfNoEntry: false });
+    if (!stat) throw new Error(`路径不存在：${relative}`);
+    if (stat.isSymbolicLink()) throw invalid('trash.path', 'symbolic links are not allowed in workspace paths');
+  }
+  return target;
+}
+
 /** Only title/defaultPath/filters reach dialog.showSaveDialog; other Electron options are dropped. */
 function sanitizeSaveDialogOptions(options) {
   if (options === undefined || options === null) return {};
@@ -202,4 +230,5 @@ module.exports = {
   sanitizeSaveDialogOptions,
   sanitizePicGoConfig,
   sanitizePicGoUpload,
+  resolveTrashTarget,
 };

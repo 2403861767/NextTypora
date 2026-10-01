@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const Module = require('module');
 
 // 用一个假的 electron 模块加载真实的 main.js：窗口/应用的生命周期按 Electron 文档建模，
@@ -24,6 +27,9 @@ function createFakeElectron() {
     hasQuit: false,
     messageBoxes: [],
     messageBoxResponse: 0,
+    // shell.trashItem 收到的路径（系统回收站的替身）
+    trashed: [],
+    trashError: null,
   };
 
   const app = new EventEmitter();
@@ -129,7 +135,12 @@ function createFakeElectron() {
       setApplicationMenu: () => undefined,
       buildFromTemplate: () => ({}),
     },
-    shell: {},
+    shell: {
+      trashItem: async (targetPath) => {
+        if (state.trashError) throw state.trashError;
+        state.trashed.push(targetPath);
+      },
+    },
   };
 
   return { electron, windows, ipcHandlers, state };
@@ -145,14 +156,19 @@ async function settle() {
  * 启动 main.js 直到主窗口创建完成。
  * renderer.unsaved：编辑器里有还没保存的修改；renderer.saveSucceeds：保存能否成功；
  * pageLoaded=false 表示界面还没加载完（渲染进程还没开始监听主进程的消息）。
+ * workspace：后端（GET /api/workspace）报告的当前工作区。
  */
-async function bootApp(t, { unsaved = false, saveSucceeds = true, pageLoaded = true } = {}) {
+async function bootApp(t, { unsaved = false, saveSucceeds = true, pageLoaded = true, workspace = '' } = {}) {
   const fake = createFakeElectron();
   const originalLoad = Module._load;
   const originalFetch = globalThis.fetch;
   const originalToken = process.env.AUTH_TOKEN;
   process.env.AUTH_TOKEN = 'test-token';
-  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
+  const backendRequests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    backendRequests.push({ url: String(url), headers: options.headers ?? {} });
+    return { ok: true, status: 200, json: async () => (String(url).endsWith('/api/workspace') ? { path: workspace } : {}) };
+  };
   t.after(() => {
     globalThis.fetch = originalFetch;
     if (originalToken === undefined) delete process.env.AUTH_TOKEN;
@@ -179,7 +195,11 @@ async function bootApp(t, { unsaved = false, saveSucceeds = true, pageLoaded = t
   }
   assert.ok(mainWindow, 'main window was created');
 
-  const invoke = (channel, ...args) => fake.ipcHandlers.get(channel)({ sender: mainWindow.webContents }, ...args);
+  const invoke = (channel, ...args) => {
+    const handler = fake.ipcHandlers.get(channel);
+    assert.ok(handler, `the main process handles "${channel}"`);
+    return handler({ sender: mainWindow.webContents }, ...args);
+  };
   const renderer = {
     unsaved,
     saveSucceeds,
@@ -213,6 +233,7 @@ async function bootApp(t, { unsaved = false, saveSucceeds = true, pageLoaded = t
     mainWindow,
     renderer,
     invoke,
+    backendRequests,
     flushRequests: () => mainWindow.webContents.sent.filter((channel) => channel === 'app:request-flush-save').length,
   };
 }
@@ -286,4 +307,77 @@ test('a window whose page has not loaded yet closes immediately', async (t) => {
 
   assert.equal(app.mainWindow.isDestroyed(), true);
   assert.equal(app.flushRequests(), 0);
+});
+
+/** 临时工作区：一篇笔记、一个带备份目录的文件夹，以及工作区之外的一个文件 */
+function trashWorkspace(t) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nexttyproa-main-'));
+  const vault = path.join(base, 'vault');
+  const files = [
+    path.join(vault, '日记', '图片笔记.md'),
+    path.join(vault, '项目2026', '需求 v1.2.md'),
+    path.join(vault, '项目2026', '.nexttyproa-backups', '需求 v1.2.md.2026-09-25T000000-000Z.bak'),
+    path.join(base, 'outside.md'),
+  ];
+  for (const file of files) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'content');
+  }
+  t.after(() => {
+    // Node 24 的 fs.rmSync 在 Windows 的中文路径上可能什么都不删，这里逐项删除
+    for (const file of files) fs.unlinkSync(file);
+    for (const dir of ['项目2026/.nexttyproa-backups', '项目2026', '日记', '']) fs.rmdirSync(path.join(vault, dir));
+    fs.rmdirSync(base);
+  });
+  return { base, vault };
+}
+
+// BUG_BACKLOG_REAL_WORLD.md RW-P2-008：删除是永久删除，没有回收站
+test('RW-P2-008: file:trashItem moves a note of the current workspace to the recycle bin', async (t) => {
+  const { vault } = trashWorkspace(t);
+  const app = await bootApp(t, { workspace: vault });
+
+  await app.invoke('file:trashItem', '日记/图片笔记.md');
+
+  assert.deepEqual(app.fake.state.trashed, [path.join(vault, '日记', '图片笔记.md')]);
+  // 工作区根目录以后端为准，而不是渲染进程传来的路径
+  const workspaceRequest = app.backendRequests.find((request) => request.url.endsWith('/api/workspace'));
+  assert.equal(workspaceRequest?.headers['X-Auth-Token'], 'test-token');
+});
+
+test('RW-P2-008: file:trashItem moves a folder as a whole, so its backups stay recoverable', async (t) => {
+  const { vault } = trashWorkspace(t);
+  const app = await bootApp(t, { workspace: vault });
+
+  await app.invoke('file:trashItem', '项目2026');
+
+  assert.deepEqual(app.fake.state.trashed, [path.join(vault, '项目2026')]);
+});
+
+test('RW-P2-008: file:trashItem refuses paths outside the workspace, the workspace itself and missing files', async (t) => {
+  const { base, vault } = trashWorkspace(t);
+  const app = await bootApp(t, { workspace: vault });
+
+  for (const target of ['../outside.md', path.join(base, 'outside.md'), '', '.', '日记/不存在.md', null]) {
+    await assert.rejects(async () => app.invoke('file:trashItem', target), undefined, JSON.stringify(target));
+  }
+
+  assert.deepEqual(app.fake.state.trashed, []);
+});
+
+test('RW-P2-008: file:trashItem does nothing when no workspace is open', async (t) => {
+  trashWorkspace(t);
+  const app = await bootApp(t, { workspace: '' });
+
+  await assert.rejects(async () => app.invoke('file:trashItem', '日记/图片笔记.md'));
+
+  assert.deepEqual(app.fake.state.trashed, []);
+});
+
+test('RW-P2-008: a recycle bin failure is reported to the renderer', async (t) => {
+  const { vault } = trashWorkspace(t);
+  const app = await bootApp(t, { workspace: vault });
+  app.fake.state.trashError = new Error('Failed to move item to trash');
+
+  await assert.rejects(async () => app.invoke('file:trashItem', '日记/图片笔记.md'), /Failed to move item to trash/);
 });

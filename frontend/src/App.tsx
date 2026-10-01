@@ -396,6 +396,8 @@ export default function App() {
   const [renameTarget, setRenameTarget] = useState<TreeSelection | null>(null);
   const [renameName, setRenameName] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<TreeSelection | null>(null);
+  // 移到回收站失败的原因；有值时删除对话框改为询问是否永久删除
+  const [trashFailure, setTrashFailure] = useState<string | null>(null);
   const [moveDialog, setMoveDialog] = useState<MoveDialogState | null>(null);
   const [quickOpen, setQuickOpen] = useState(false);
   const [fileTreeSortMode, setFileTreeSortMode] = useState<FileTreeSortMode>('name');
@@ -480,6 +482,7 @@ export default function App() {
   );
 
   const canDeleteSelectedNote = Boolean(selectedPath);
+  const deletesToTrash = Boolean(window.nextTyproa?.trashItem) && trashFailure === null;
   const isDirty = selectedPath ? content !== loadedContent : false;
   const displayPath = selectedPath || unsupportedPreviewPath;
   const documentTitle = useMemo(() => noteDisplayName(displayPath), [displayPath]);
@@ -1772,22 +1775,37 @@ export default function App() {
     const target = deleteTarget;
     const deletesMarkdown = Boolean(selectedPath && isPathAffected(selectedPath, target));
     const deletesUnsupported = Boolean(unsupportedPreviewPath && isPathAffected(unsupportedPreviewPath, target));
+    // 桌面版移到系统回收站（可以恢复）；浏览器里没有回收站，或者回收站不可用且用户已确认，才永久删除
+    const trashItem = trashFailure === null ? window.nextTyproa?.trashItem : undefined;
     setDeleteTarget(null);
+    setTrashFailure(null);
     try {
       const saved = await flushSave();
       if (!saved) {
         showError('保存失败，无法删除');
         return;
       }
-      await deletePath(target.path);
-      await refreshTree();
+      if (trashItem) {
+        try {
+          await trashItem(target.path);
+        } catch (e) {
+          setTrashFailure(e instanceof Error && e.message ? e.message : '未知错误');
+          setDeleteTarget(target);
+          return;
+        }
+        // 文件是在后端之外被移走的：让后端重新同步文件树和搜索索引
+        await refreshWorkspaceTree();
+      } else {
+        await deletePath(target.path);
+        await refreshTree();
+      }
       const nextTabs = openTabs.filter((tab) => !isPathAffected(tab.path, target));
       setOpenTabs(nextTabs);
       void patchStoredAppSettings({
         openTabs: nextTabs,
         activeTabPath: activeTabPath && isPathAffected(activeTabPath, target) ? undefined : activeTabPath,
       }).catch(() => undefined);
-      messageApi.success('删除成功');
+      messageApi.success(trashItem ? '已移到回收站' : '删除成功');
 
       if (deletesMarkdown) {
         clearMarkdownState();
@@ -2623,13 +2641,24 @@ export default function App() {
           title={deleteTarget?.isDirectory ? '删除文件夹' : '删除文件'}
           open={Boolean(deleteTarget)}
           onOk={() => { void submitDelete(); }}
-          onCancel={() => setDeleteTarget(null)}
-          okText="删除"
+          onCancel={() => {
+            setDeleteTarget(null);
+            setTrashFailure(null);
+          }}
+          okText={deletesToTrash ? '移到回收站' : trashFailure !== null ? '永久删除' : '删除'}
           okButtonProps={{ danger: true }}
           cancelText="取消"
           centered
         >
-          确定删除 <Text code>{deleteTarget?.path}</Text> 吗？{deleteTarget?.isDirectory ? '文件夹中的所有内容都会被删除，' : ''}此操作不可撤销。
+          {deletesToTrash ? (
+            <>
+              确定将 <Text code>{deleteTarget?.path}</Text> 移到回收站吗？{deleteTarget?.isDirectory ? '文件夹中的所有内容会一起移入，' : ''}之后可以从系统回收站恢复。
+            </>
+          ) : (
+            <>
+              {trashFailure !== null ? `无法移到回收站（${trashFailure}）。` : ''}确定{trashFailure !== null ? '永久' : ''}删除 <Text code>{deleteTarget?.path}</Text> 吗？{deleteTarget?.isDirectory ? '文件夹中的所有内容都会被删除，' : ''}此操作不可撤销。
+            </>
+          )}
         </Modal>
 
         <SettingsModal
