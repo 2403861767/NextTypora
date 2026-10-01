@@ -5,7 +5,8 @@ import type { Note, TreeNode } from './types';
 // 用内存中的“磁盘”替代后端：App 通过 ./api 读写笔记，其余逻辑（自动保存、标签页、对话框、编辑器）都是真实的
 // disk 是主工作区 D:/vault 中的文件（相对路径）；其他目录中的文件放在 backend.external（绝对路径，/ 分隔）
 const disk = vi.hoisted(() => new Map<string, string>());
-const backend = vi.hoisted(() => ({ workspace: 'D:/vault', external: new Map<string, string>() }));
+// titlesFromContent：笔记标题像真实后端那样取自内容（见 titleOf）。默认关闭，沿用“文件名即标题”，现有用例不受影响
+const backend = vi.hoisted(() => ({ workspace: 'D:/vault', external: new Map<string, string>(), titlesFromContent: false }));
 const MAIN_VAULT = 'D:/vault';
 
 function toSlashes(path: string): string {
@@ -56,10 +57,20 @@ function hashOf(content: string): string {
   return `hash:${content.length}:${content}`;
 }
 
+/** 与后端 FileService.extractTitle 一致：首行 “# 标题” → 标题，首行是其他文字 → 该文字（最多 80 字），否则用文件名（不含扩展名） */
+function titleOf(path: string, content: string): string {
+  const fileName = path.split('/').pop() || path;
+  if (!backend.titlesFromContent) return fileName;
+  const firstLine = (content.split(/\r?\n/)[0] ?? '').trim();
+  if (firstLine.startsWith('# ')) return firstLine.slice(2).trim();
+  if (firstLine) return firstLine.slice(0, 80);
+  return fileName.replace(/\.(md|markdown)$/i, '');
+}
+
 function noteOf(path: string, content: string): Note {
   return {
     path,
-    title: path.split('/').pop() || path,
+    title: titleOf(path, content),
     content,
     contentHash: hashOf(content),
     updatedAt: '2026-09-25T00:00:00Z',
@@ -197,6 +208,7 @@ beforeEach(() => {
   disk.clear();
   backend.workspace = MAIN_VAULT;
   backend.external.clear();
+  backend.titlesFromContent = false;
   localStorage.clear();
   vi.mocked(api.saveNote).mockClear();
   vi.mocked(api.createNote).mockClear();
@@ -222,11 +234,18 @@ function storedSettings(): Record<string, unknown> {
 }
 
 /** 以“重启后恢复标签页”的真实路径打开笔记：settings 里记录打开的标签页，App 启动时从磁盘读取激活的那一个 */
-async function openApp(notes: Record<string, string>, tabs: string[], activeTabPath = tabs[0]) {
+async function openApp(
+  notes: Record<string, string>,
+  tabs: string[],
+  activeTabPath = tabs[0],
+  extraSettings: Record<string, unknown> = {},
+) {
   Object.entries(notes).forEach(([path, content]) => disk.set(path, content));
   localStorage.setItem('nexttyproa-app-settings', JSON.stringify({
-    openTabs: tabs.map((path) => ({ id: path, path, title: path.split('/').pop() })),
+    // 真实应用保存的是上次打开时后端给出的标题
+    openTabs: tabs.map((path) => ({ id: path, path, title: titleOf(path, disk.get(path) ?? '') })),
     activeTabPath,
+    ...extraSettings,
   }));
   const view = render(<App />);
   await waitFor(() => expect(editorParagraphs().length).toBeGreaterThan(0), { timeout: 10000 });
@@ -1060,6 +1079,50 @@ describe('App (integration with mocked backend)', () => {
       await submitCreateDialog('新建 Markdown 文件', '同目录笔记');
 
       await waitFor(() => expect(disk.has('日记/同目录笔记.md')).toBe(true), { timeout: 5000 });
+    }, 20000);
+  });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P3-001：新建笔记的内容是固定的 “# 新笔记”，标签标题取自这一行，
+  // 所以先后新建的笔记标签都叫“新笔记”，无法区分
+  describe('RW-P3-001: titles of newly created notes', () => {
+    beforeEach(() => {
+      // 标签标题来自后端对笔记内容的解析：这里要让测试里的后端也这样做
+      backend.titlesFromContent = true;
+    });
+
+    /** 工具栏“新建笔记” → 输入名称 → 创建 */
+    async function createNoteNamed(name: string) {
+      fireEvent.click(screen.getByTitle('新建笔记 (Ctrl+N)'));
+      await waitFor(() => expect(isDialogOpen('新建 Markdown 文件')).toBe(true), { timeout: 5000 });
+      const dialog = openDialog('新建 Markdown 文件')!;
+      fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: name } });
+      fireEvent.click(within(dialog).getByRole('button', { name: /创\s*建/ }));
+    }
+
+    it('titles each new note after its file name instead of one shared placeholder', async () => {
+      await openApp({ 'a.md': '# A\n\n已有笔记\n' }, ['a.md']);
+
+      await createNoteNamed('会议纪要 2024.01.05');
+      await waitFor(() => expect(tabPaths()).toContain('会议纪要 2024.01.05.md'), { timeout: 5000 });
+      await createNoteNamed('新目录/笔记A');
+      await waitFor(() => expect(tabPaths()).toContain('新目录/笔记A.md'), { timeout: 5000 });
+
+      expect(disk.get('会议纪要 2024.01.05.md')).toBe('# 会议纪要 2024.01.05\n\n');
+      expect(disk.get('新目录/笔记A.md')).toBe('# 笔记A\n\n');
+      expect(tabTitles()).toEqual(['A', '会议纪要 2024.01.05', '笔记A']);
+    }, 20000);
+
+    it('does not put the .md / .markdown extension into the heading, whether typed or appended', async () => {
+      await openApp({ 'a.md': '# A\n\n已有笔记\n' }, ['a.md']);
+
+      await createNoteNamed('foo.md');
+      await waitFor(() => expect(tabPaths()).toContain('foo.md'), { timeout: 5000 });
+      await createNoteNamed('文档/bar.markdown');
+      await waitFor(() => expect(tabPaths()).toContain('文档/bar.markdown'), { timeout: 5000 });
+
+      expect(disk.get('foo.md')).toBe('# foo\n\n');
+      expect(disk.get('文档/bar.markdown')).toBe('# bar\n\n');
+      expect(tabTitles()).toEqual(['A', 'foo', 'bar']);
     }, 20000);
   });
 });

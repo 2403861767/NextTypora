@@ -319,6 +319,11 @@ function markdownName(name: string): string {
   return isMarkdownPath(name) ? name : `${name}.md`;
 }
 
+/** 新建笔记的标题行取自文件名（不含扩展名）：标签页标题取自这一行，不同的新笔记才能区分 */
+function noteTitleFromPath(path: string): string {
+  return noteDisplayName(path).replace(/\.(md|markdown)$/i, '');
+}
+
 function timestampForFileName(): string {
   const date = new Date();
   const pad = (value: number) => String(value).padStart(2, '0');
@@ -1673,7 +1678,7 @@ export default function App() {
 
       const targetPath = resolveCreatePath(markdownName(rawName), createDialog.parentPath);
       // 如果是从文件缺失对话框触发的另存为，使用保存的内容
-      const contentToSave = missingSaveAs ? missingSaveAs.content : '# 新笔记\n\n';
+      const contentToSave = missingSaveAs ? missingSaveAs.content : `# ${noteTitleFromPath(targetPath)}\n\n`;
       const note = await createNote(targetPath, contentToSave);
       await refreshTree();
       messageApi.success('创建成功');
