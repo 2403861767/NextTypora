@@ -548,6 +548,15 @@ function createWindow() {
     mainWindow = null;
   });
 
+  // 关闭窗口（标题栏按钮、Alt+F4、任务栏）和退出走同一条路：先让渲染进程保存，保存完再真正关闭。
+  // 否则有未保存修改时，渲染进程的 beforeunload 会悄悄拦下这次关闭，用户得再点一次。
+  // 界面还没加载完时渲染进程不会应答，直接关闭
+  mainWindow.on('close', (event) => {
+    if (quitting || !pageReady) return;
+    event.preventDefault();
+    requestFlushSave();
+  });
+
   // 已确认退出时，忽略渲染进程 beforeunload 对关闭的拦截，否则 app.quit() 会被静默取消
   mainWindow.webContents.on('will-prevent-unload', (event) => {
     if (quitting) event.preventDefault();
@@ -687,6 +696,14 @@ function finishQuit() {
   flushSaveTimeout = null;
   quitting = true;
   app.quit();
+}
+
+// 请渲染进程保存未保存的修改；应答由 app:flush-save-done 处理（保存成功则退出，失败则询问用户）
+function requestFlushSave() {
+  if (flushSavePending) return;
+  flushSavePending = true;
+  mainWindow.webContents.send('app:request-flush-save');
+  armFlushSaveWatchdog();
 }
 
 function armFlushSaveWatchdog() {
@@ -906,10 +923,7 @@ app.on('before-quit', (event) => {
     return;
   }
   event.preventDefault();
-  if (flushSavePending) return;
-  flushSavePending = true;
-  mainWindow.webContents.send('app:request-flush-save');
-  armFlushSaveWatchdog();
+  requestFlushSave();
 });
 
 app.on('will-quit', () => {
