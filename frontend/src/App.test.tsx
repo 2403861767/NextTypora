@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import type { Note, TreeNode } from './types';
+import type { FileOperationResult, Note, TreeNode } from './types';
 
 // 用内存中的“磁盘”替代后端：App 通过 ./api 读写笔记，其余逻辑（自动保存、标签页、对话框、编辑器）都是真实的
 // disk 是主工作区 D:/vault 中的文件（相对路径）；其他目录中的文件放在 backend.external（绝对路径，/ 分隔）
@@ -51,6 +51,14 @@ function takeFromWorkspace(relativePath: string): Map<string, string> {
     else backend.external.delete(absolutePath);
   }
   return taken;
+}
+
+/** 把当前工作区里的一个文件或整个文件夹移到新路径（改名和移动都是这样），路径不存在时返回 undefined */
+function moveInWorkspace(from: string, to: string): FileOperationResult | undefined {
+  const moved = takeFromWorkspace(from);
+  if (moved.size === 0) return undefined;
+  moved.forEach((content, path) => writeFile(absolutePathOf(`${to}${path.slice(from.length)}`), content));
+  return { name: to.split('/').pop() ?? to, path: to, directory: !moved.has(from) };
 }
 
 function hashOf(content: string): string {
@@ -123,6 +131,20 @@ vi.mock('./api', async (importOriginal) => {
       const removed = takeFromWorkspace(path);
       if (removed.size === 0) throw new actual.ApiError(`Path not found: ${path}`, 404, { error: 'Path not found' });
       return { path, directory: !removed.has(path) };
+    }),
+    // 后端的 PUT /api/files/rename：在原目录下改名（文件夹连同里面的所有内容）
+    renamePath: vi.fn(async (path: string, newName: string) => {
+      const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+      const result = moveInWorkspace(path, `${parent}${newName}`);
+      if (!result) throw new actual.ApiError(`Path not found: ${path}`, 404, { error: 'Path not found' });
+      return result;
+    }),
+    // 后端的 PUT /api/files/move：移到目标文件夹下（'' 是工作区根目录）
+    movePath: vi.fn(async (path: string, targetFolder: string) => {
+      const name = path.split('/').pop() ?? path;
+      const result = moveInWorkspace(path, targetFolder ? `${targetFolder}/${name}` : name);
+      if (!result) throw new actual.ApiError(`Path not found: ${path}`, 404, { error: 'Path not found' });
+      return result;
     }),
   };
 });
@@ -1255,6 +1277,126 @@ describe('App (integration with mocked backend)', () => {
       pressShortcut('#', { code: 'Digit3', shiftKey: true });
       expect(isSidebarTabSelected('Files')).toBe(true);
       expect(isSidebarTabSelected('Outline')).toBe(false);
+    }, 20000);
+  });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P3-005 (1)(2)：点文件夹名称不能展开；重命名/移动后，受影响标签的标题
+  // 从笔记的标题（“深层标题”）变成带扩展名的文件名（“深层笔记.md”），被重命名的文件夹还会自动折叠
+  describe('RW-P3-005: file tree and tab titles', () => {
+    const VAULT: Record<string, string> = {
+      '项目/需求.md': '# 需求\n\n需求内容\n',
+      '项目/子目录/深层笔记.md': '# 深层标题\n\n深层内容\n',
+      '归档/旧.md': '# 旧\n\n旧内容\n',
+      'a.md': '# A\n\n甲\n',
+    };
+    // settings 里按工作区记录的、文件树里展开着的文件夹
+    const EXPANDED = { fileTreeExpandedFolders: { [MAIN_VAULT]: ['归档', '项目', '项目/子目录'] } };
+
+    beforeEach(() => {
+      // 标签标题取自笔记的标题行，像真实后端一样
+      backend.titlesFromContent = true;
+      vi.mocked(api.renamePath).mockClear();
+      vi.mocked(api.movePath).mockClear();
+    });
+
+    function tree() {
+      return within(screen.getByLabelText('文件树根目录'));
+    }
+
+    async function settle(ms = 1500) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    }
+
+    function expandedFolders(): string[] {
+      return (storedSettings().fileTreeExpandedFolders as Record<string, string[]>)[MAIN_VAULT];
+    }
+
+    /** 文件树右键菜单的“重命名” → 输入新名称 → 确定 */
+    async function renameInTree(name: string, newName: string) {
+      fireEvent.contextMenu(tree().getByText(name).closest('button')!);
+      fireEvent.click(await screen.findByText('重命名'));
+      await waitFor(() => expect(isDialogOpen('重命名')).toBe(true), { timeout: 5000 });
+      const dialog = openDialog('重命名')!;
+      fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: newName } });
+      fireEvent.click(within(dialog).getByRole('button', { name: /重\s*命\s*名/ }));
+    }
+
+    function dragData() {
+      const store = new Map<string, string>();
+      return {
+        effectAllowed: '',
+        dropEffect: '',
+        setData: (type: string, value: string) => { store.set(type, value); },
+        getData: (type: string) => store.get(type) ?? '',
+      };
+    }
+
+    it('expands a folder when its name is clicked, and remembers it', async () => {
+      await openApp(VAULT, ['a.md'], 'a.md');
+      expect(tree().queryByText('需求.md')).toBeNull();
+
+      fireEvent.click(tree().getByText('项目'));
+
+      expect(tree().getByText('需求.md')).toBeInTheDocument();
+      await waitFor(() => expect(expandedFolders()).toEqual(['项目']), { timeout: 3000 });
+    }, 20000);
+
+    it('keeps the tab titles taken from the notes\' headings when their folder is renamed', async () => {
+      await openApp(VAULT, ['项目/子目录/深层笔记.md', 'a.md'], 'a.md', EXPANDED);
+      expect(tabTitles()).toEqual(['深层标题', 'A']);
+
+      await renameInTree('项目', '项目2026');
+
+      await waitFor(() => expect(disk.has('项目2026/子目录/深层笔记.md')).toBe(true), { timeout: 5000 });
+      await settle();
+      expect(tabPaths()).toEqual(['项目2026/子目录/深层笔记.md', 'a.md']);
+      expect(tabTitles()).toEqual(['深层标题', 'A']);
+      // 重启后恢复出的标题也一样
+      expect((storedSettings().openTabs as { title: string }[]).map((tab) => tab.title)).toEqual(['深层标题', 'A']);
+    }, 20000);
+
+    it('keeps the heading title of a renamed note', async () => {
+      await openApp(VAULT, ['项目/需求.md', 'a.md'], 'a.md', EXPANDED);
+
+      await renameInTree('需求.md', '需求v2.md');
+
+      await waitFor(() => expect(disk.has('项目/需求v2.md')).toBe(true), { timeout: 5000 });
+      await settle();
+      expect(tabPaths()).toEqual(['项目/需求v2.md', 'a.md']);
+      expect(tabTitles()).toEqual(['需求', 'A']);
+      expect(expandedFolders()).toEqual(['归档', '项目', '项目/子目录']);
+    }, 20000);
+
+    it('keeps a renamed folder and its expanded sub-folders open', async () => {
+      await openApp(VAULT, ['a.md'], 'a.md', EXPANDED);
+      expect(tree().getByText('深层笔记.md')).toBeInTheDocument();
+
+      await renameInTree('项目', '项目2026');
+
+      await waitFor(() => expect(disk.has('项目2026/需求.md')).toBe(true), { timeout: 5000 });
+      await settle(300);
+      expect(tree().getByText('项目2026')).toBeInTheDocument();
+      expect(tree().getByText('需求.md')).toBeInTheDocument();
+      expect(tree().getByText('深层笔记.md')).toBeInTheDocument();
+      expect(expandedFolders()).toEqual(['归档', '项目2026', '项目2026/子目录']);
+    }, 20000);
+
+    it('keeps the expanded sub-folders of a folder that is dragged into another folder', async () => {
+      await openApp(VAULT, ['a.md'], 'a.md', EXPANDED);
+      const source = tree().getByText('子目录').closest('button')!;
+      const target = tree().getByText('归档').closest('button')!;
+      const transfer = dragData();
+
+      fireEvent.dragStart(source, { dataTransfer: transfer });
+      fireEvent.dragOver(target, { dataTransfer: transfer });
+      fireEvent.drop(target, { dataTransfer: transfer });
+
+      await waitFor(() => expect(disk.has('归档/子目录/深层笔记.md')).toBe(true), { timeout: 5000 });
+      await settle(300);
+      expect(tree().getByText('深层笔记.md')).toBeInTheDocument();
+      expect(expandedFolders()).toEqual(['归档', '归档/子目录', '项目']);
     }, 20000);
   });
 });

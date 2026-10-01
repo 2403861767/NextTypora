@@ -561,6 +561,16 @@ export default function App() {
     });
   }, [persistFileTreeExpandedFolders]);
 
+  // 文件夹改名或被移动后，它自己和里面展开着的子文件夹换了路径：把展开状态跟过去，
+  // 否则文件树刷新时旧路径被清理，文件夹就折叠了（要在刷新文件树之后调用，新路径才不会被当成失效路径清掉）
+  const followPathChangeInExpandedFolders = useCallback((target: TreeSelection, newTargetPath: string) => {
+    if (!target.isDirectory) return;
+    const moved = (fileTreeExpandedFolders[workspacePath] ?? [])
+      .filter((path) => isPathAffected(path, target))
+      .map((path) => replaceAffectedPath(path, target, newTargetPath));
+    addWorkspaceExpandedFolders(workspacePath, moved);
+  }, [addWorkspaceExpandedFolders, fileTreeExpandedFolders, workspacePath]);
+
   const handleExpandedFoldersChange = useCallback((paths: string[]) => {
     setWorkspaceExpandedFolders(workspacePath, paths);
   }, [setWorkspaceExpandedFolders, workspacePath]);
@@ -674,11 +684,11 @@ export default function App() {
       const next = prev.map((tab) => {
         if (!isPathAffected(tab.path, target)) return tab;
         const nextPath = replaceAffectedPath(tab.path, target, newTargetPath);
+        // 标题取自笔记内容，路径变了内容没变，标题保持不变（不能换成带扩展名的文件名）
         return {
           ...tab,
           id: tab.id === tab.path ? nextPath : tab.id,
           path: nextPath,
-          title: noteDisplayName(nextPath),
         };
       });
       const nextActivePath = activeTabPath && isPathAffected(activeTabPath, target)
@@ -1593,6 +1603,7 @@ export default function App() {
       const result = await movePath(normalizedSource, normalizedTargetFolder);
       await refreshTree();
       syncTabsAfterPathChange(source, result.path);
+      followPathChangeInExpandedFolders(source, result.path);
       addWorkspaceExpandedFolders(workspacePath, [normalizedTargetFolder]);
       messageApi.success('移动成功');
 
@@ -1631,6 +1642,7 @@ export default function App() {
     clearMarkdownState,
     addWorkspaceExpandedFolders,
     flushSave,
+    followPathChangeInExpandedFolders,
     messageApi,
     openNoteAt,
     refreshTree,
@@ -1733,6 +1745,7 @@ export default function App() {
       const result = await renamePath(target.path, nextName);
       await refreshTree();
       syncTabsAfterPathChange(target, result.path);
+      followPathChangeInExpandedFolders(target, result.path);
       messageApi.success('重命名成功');
 
       const renamedSelection: TreeSelection = { path: result.path, isDirectory: result.directory };

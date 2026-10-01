@@ -225,8 +225,12 @@ function TreeItem({
 
     if (event.key === 'Enter') {
       event.preventDefault();
-      if (node.directory) onSelectFolder(node.path);
-      else onSelectFile(node.path);
+      if (node.directory) {
+        onSelectFolder(node.path);
+        onToggleFolder(pathKey);
+      } else {
+        onSelectFile(node.path);
+      }
     }
   };
 
@@ -270,7 +274,9 @@ function TreeItem({
                 onToggleFolder(pathKey);
                 return;
               }
+              // 点名称：选中并展开/折叠（和 Typora、VS Code 一致）
               onSelectFolder(node.path);
+              onToggleFolder(pathKey);
             }}
             title={node.path}
           >
