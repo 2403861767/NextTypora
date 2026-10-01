@@ -28,6 +28,7 @@ import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -419,6 +420,27 @@ class NoteApiIntegrationTest {
                 .andExpect(status().isOk());
 
         assertThat(output.getOut()).contains("Renamed file: old.md -> new.md", "Deleted file: new.md");
+    }
+
+    // BUG_BACKLOG_REAL_WORLD.md RW-P2-006：前端每 8 秒调用一次 /api/tree/refresh，
+    // 索引不了的文件不应该在每次轮询时都被重读并再写一条 WARN 日志
+    @Test
+    void repeatedTreeRefreshLogsAnUnindexableFileOnlyOnce(CapturedOutput output) throws Exception {
+        configureWorkspace();
+        Files.write(tempVault.resolve("broken-poll.md"), new byte[] {0, 1, 2, 3, '#', 0});
+
+        for (int poll = 0; poll < 3; poll++) {
+            mockMvc.perform(post("/api/tree/refresh")
+                            .header("X-Auth-Token", TOKEN))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$[0].path").value("broken-poll.md"));
+        }
+
+        long warnings = Pattern.compile("Failed to index [^\\r\\n]*broken-poll\\.md")
+                .matcher(output.getOut())
+                .results()
+                .count();
+        assertThat(warnings).isEqualTo(1);
     }
 
     @Test

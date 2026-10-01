@@ -1,10 +1,15 @@
 package com.nexttyproa.service;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.nexttyproa.dto.SearchResponseDto;
 import com.nexttyproa.dto.SearchResultDto;
 import com.nexttyproa.dto.SearchStatusDto;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -13,6 +18,7 @@ import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -85,6 +91,118 @@ class IndexServiceTest {
         assertEquals("keep.md", results.get(0).getPath());
         assertEquals(1, indexService.status().getIndexedFiles());
         assertEquals(1, indexService.status().getTotalFiles());
+    }
+
+    // BUG_BACKLOG_REAL_WORLD.md RW-P2-006：前端每 8 秒轮询一次 reindexVault。
+    // 索引失败的文件（如被当成二进制的 .md）没有被记住，每次轮询都会重读一遍并再写一条 WARN 日志
+    @Test
+    void reindexDoesNotRereadOrRelogUnchangedFailingFiles(@TempDir Path vaultRoot) throws Exception {
+        AtomicInteger reads = new AtomicInteger();
+        IndexService indexService = new IndexService(countingReads(reads));
+        Files.writeString(vaultRoot.resolve("good.md"), "# Good\nhello");
+        Files.write(vaultRoot.resolve("坏文件.md"), BINARY_CONTENT);
+        ListAppender<ILoggingEvent> logs = captureIndexLogs();
+        try {
+            indexService.reindexVault(vaultRoot);
+            assertEquals(2, reads.get());
+            assertEquals(1, indexService.status().getFailedFiles());
+            assertEquals(1, warnings(logs, "坏文件.md"));
+
+            // 之后的每一次轮询：文件没变，不再读取，也不再写日志
+            reads.set(0);
+            indexService.reindexVault(vaultRoot);
+            indexService.reindexVault(vaultRoot);
+
+            assertEquals(0, reads.get());
+            assertEquals(1, warnings(logs, "坏文件.md"));
+            assertEquals(1, indexService.status().getFailedFiles());
+            assertEquals(2, indexService.status().getTotalFiles());
+            assertEquals(1, indexService.status().getIndexedFiles());
+        } finally {
+            indexLogger().detachAppender(logs);
+        }
+    }
+
+    @Test
+    void reindexRetriesAFailingFileOnceItChanges(@TempDir Path vaultRoot) throws Exception {
+        AtomicInteger reads = new AtomicInteger();
+        IndexService indexService = new IndexService(countingReads(reads));
+        Path broken = vaultRoot.resolve("坏文件.md");
+        Files.write(broken, BINARY_CONTENT);
+        indexService.reindexVault(vaultRoot);
+        indexService.reindexVault(vaultRoot);
+        assertEquals(1, indexService.status().getFailedFiles());
+
+        // 用户把它修好了（内容和大小都变了）
+        Files.writeString(broken, "# 修好了\nrepaired-keyword 现在是正常文本");
+        reads.set(0);
+        indexService.reindexVault(vaultRoot);
+
+        assertEquals(1, reads.get());
+        assertEquals(0, indexService.status().getFailedFiles());
+        assertEquals(1, indexService.search("repaired-keyword").size());
+
+        reads.set(0);
+        indexService.reindexVault(vaultRoot);
+        assertEquals(0, reads.get());
+    }
+
+    @Test
+    void reindexForgetsFailuresOfDeletedFilesAndOtherVaults(@TempDir Path tempDir) throws Exception {
+        IndexService indexService = new IndexService(new FileService());
+        Path vaultA = Files.createDirectories(tempDir.resolve("vaultA"));
+        Path vaultB = Files.createDirectories(tempDir.resolve("vaultB"));
+        Files.write(vaultA.resolve("broken.md"), BINARY_CONTENT);
+        Files.write(vaultA.resolve("gone.md"), BINARY_CONTENT);
+        Files.writeString(vaultB.resolve("broken.md"), "# Fine\nother-vault text");
+
+        indexService.reindexVault(vaultA);
+        assertEquals(2, indexService.status().getFailedFiles());
+
+        Files.delete(vaultA.resolve("gone.md"));
+        indexService.reindexVault(vaultA);
+        assertEquals(1, indexService.status().getFailedFiles());
+        assertEquals(1, indexService.status().getTotalFiles());
+
+        // 另一个工作区里同名的文件是好的，不能沿用上一个工作区的失败记录
+        indexService.reindexVault(vaultB);
+        assertEquals(0, indexService.status().getFailedFiles());
+        assertEquals(1, indexService.search("other-vault").size());
+    }
+
+    @Test
+    void reindexDoesNotDescendIntoHiddenOrAssetsFolders(@TempDir Path vaultRoot) throws Exception {
+        List<String> examined = new CopyOnWriteArrayList<>();
+        FileService fileService = new FileService() {
+            @Override
+            public String relativePathString(Path root, Path absolute) {
+                String relative = super.relativePathString(root, absolute);
+                examined.add(relative);
+                return relative;
+            }
+        };
+        IndexService indexService = new IndexService(fileService);
+        Files.writeString(vaultRoot.resolve("a.md"), "# A\nvisible-keyword");
+        Files.createDirectories(vaultRoot.resolve(".git/objects/aa"));
+        Files.writeString(vaultRoot.resolve(".git/objects/aa/blob"), "blob");
+        Files.writeString(vaultRoot.resolve(".git/HEAD.md"), "visible-keyword in git");
+        Files.createDirectories(vaultRoot.resolve("日记/.nexttyproa-backups"));
+        Files.writeString(vaultRoot.resolve("日记/笔记.md"), "# 笔记\nvisible-keyword");
+        Files.writeString(vaultRoot.resolve("日记/.nexttyproa-backups/笔记.md.2026-09-25T000000-000Z.bak"), "visible-keyword old");
+        Files.createDirectories(vaultRoot.resolve("图片笔记.assets"));
+        Files.writeString(vaultRoot.resolve("图片笔记.assets/内嵌.md"), "visible-keyword in assets");
+        Files.write(vaultRoot.resolve("图片笔记.assets/pic.png"), new byte[] {1, 2, 3});
+
+        indexService.reindexVault(vaultRoot);
+        indexService.reindexVault(vaultRoot);
+
+        List<String> insideSkippedFolders = examined.stream()
+                .filter(path -> path.startsWith(".git/") || path.contains(".nexttyproa-backups/") || path.contains(".assets/"))
+                .distinct()
+                .toList();
+        assertEquals(List.of(), insideSkippedFolders);
+        assertEquals(List.of("a.md", "日记/笔记.md"), paths(indexService.search("visible-keyword")).stream().sorted().toList());
+        assertEquals(2, indexService.status().getTotalFiles());
     }
 
     @Test
@@ -366,6 +484,37 @@ class IndexServiceTest {
     private static void writeWithMtime(Path file, String content, Instant mtime) throws IOException {
         Files.writeString(file, content);
         Files.setLastModifiedTime(file, FileTime.from(mtime));
+    }
+
+    /** 开头是 NUL 字节且没有 BOM：FileService 会判定为二进制并拒绝读取 */
+    private static final byte[] BINARY_CONTENT = {0, 1, 2, 3, '#', ' ', 'x', 0, 0};
+
+    private static FileService countingReads(AtomicInteger reads) {
+        return new FileService() {
+            @Override
+            public String readFile(Path file) throws IOException {
+                reads.incrementAndGet();
+                return super.readFile(file);
+            }
+        };
+    }
+
+    private static Logger indexLogger() {
+        return (Logger) LoggerFactory.getLogger(IndexService.class);
+    }
+
+    private static ListAppender<ILoggingEvent> captureIndexLogs() {
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        indexLogger().addAppender(appender);
+        return appender;
+    }
+
+    private static long warnings(ListAppender<ILoggingEvent> logs, String fileName) {
+        return logs.list.stream()
+                .filter(event -> event.getLevel() == Level.WARN)
+                .filter(event -> event.getFormattedMessage().contains(fileName))
+                .count();
     }
 
     private static int total(IndexService indexService, String query, String scope) {

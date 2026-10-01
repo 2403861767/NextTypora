@@ -8,8 +8,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.util.Arrays;
@@ -25,7 +27,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Stream;
 
 @Service
 public class IndexService {
@@ -37,6 +38,8 @@ public class IndexService {
 
     private final FileService fileService;
     private final Map<String, IndexedNote> notes = new ConcurrentHashMap<>();
+    // Files reindexVault could not index, with the size and mtime they had at that attempt.
+    private final Map<String, FailedFile> failures = new ConcurrentHashMap<>();
     private volatile boolean indexing;
     private volatile int totalFiles;
     private volatile int failedFiles;
@@ -48,7 +51,8 @@ public class IndexService {
         this.fileService = fileService;
     }
 
-    public void indexNote(Path vaultRoot, String relativePath, String content) {
+    /** @return false if the note could not be indexed (the reason is logged here) */
+    public boolean indexNote(Path vaultRoot, String relativePath, String content) {
         try {
             Path file = fileService.resolveSafe(vaultRoot, relativePath);
             long size = Files.exists(file) ? Files.size(file) : -1L;
@@ -56,7 +60,7 @@ public class IndexService {
                 notes.remove(FileService.normalizePathSeparators(relativePath));
                 skippedFiles++;
                 lastIndexedAt = Instant.now();
-                return;
+                return true;
             }
             Instant updatedAt = size >= 0
                     ? Files.getLastModifiedTime(file).toInstant()
@@ -78,9 +82,11 @@ public class IndexService {
             ));
             totalFiles = Math.max(totalFiles, notes.size());
             lastIndexedAt = Instant.now();
+            return true;
         } catch (IOException | SecurityException e) {
             failedFiles++;
             log.warn("Failed to index {}: {}", relativePath, e.getMessage());
+            return false;
         }
     }
 
@@ -115,22 +121,29 @@ public class IndexService {
      * Incrementally syncs the index with the vault: only files whose size or mtime changed are
      * re-read, entries for files no longer on disk are dropped, and existing entries stay
      * searchable throughout. Switching to a different vault root triggers a full rebuild.
+     *
+     * The frontend calls this every few seconds, so an unchanged vault must cost only a directory
+     * walk: files that failed to index are remembered like indexed ones (not re-read or re-logged
+     * until they change), and hidden or .assets folders are never entered.
      */
     public synchronized void reindexVault(Path vaultRoot) throws IOException {
         indexing = true;
         if (!Objects.equals(vaultRoot, indexedRoot)) {
             notes.clear();
+            failures.clear();
         }
         indexedRoot = vaultRoot;
         // Entries added concurrently (e.g. by a save) during the walk are not in this snapshot,
         // so they are never treated as stale.
         Set<String> stale = new HashSet<>(notes.keySet());
+        Set<String> staleFailures = new HashSet<>(failures.keySet());
         AtomicInteger discoveredFiles = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         AtomicInteger skipped = new AtomicInteger();
         try {
             if (vaultRoot == null || !Files.exists(vaultRoot)) {
                 notes.clear();
+                failures.clear();
                 totalFiles = 0;
                 failedFiles = 0;
                 skippedFiles = 0;
@@ -138,35 +151,61 @@ public class IndexService {
                 return;
             }
 
-            try (Stream<Path> walk = Files.walk(vaultRoot)) {
-                walk.filter(Files::isRegularFile)
-                        .filter(path -> shouldIndex(vaultRoot, path))
-                        .forEach(path -> {
-                            discoveredFiles.incrementAndGet();
-                            String relative = fileService.relativePathString(vaultRoot, path);
-                            stale.remove(relative);
-                            try {
-                                BasicFileAttributes attrs = Files.readAttributes(path, BasicFileAttributes.class);
-                                if (attrs.size() > MAX_INDEX_BYTES) {
-                                    notes.remove(relative);
-                                    skipped.incrementAndGet();
-                                    return;
-                                }
-                                IndexedNote existing = notes.get(relative);
-                                if (existing != null
-                                        && existing.size() == attrs.size()
-                                        && existing.updatedAt().equals(attrs.lastModifiedTime().toInstant())) {
-                                    return;
-                                }
-                                indexNote(vaultRoot, relative, fileService.readFile(path));
-                            } catch (IOException e) {
-                                notes.remove(relative);
-                                failed.incrementAndGet();
-                                log.warn("Failed to index {}: {}", path, e.getMessage());
-                            }
-                        });
-            }
+            Files.walkFileTree(vaultRoot, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    return !dir.equals(vaultRoot) && isExcludedName(dir.getFileName().toString())
+                            ? FileVisitResult.SKIP_SUBTREE
+                            : FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path path, BasicFileAttributes attrs) {
+                    if (!attrs.isRegularFile() || !shouldIndex(vaultRoot, path)) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    discoveredFiles.incrementAndGet();
+                    String relative = fileService.relativePathString(vaultRoot, path);
+                    stale.remove(relative);
+                    staleFailures.remove(relative);
+                    if (attrs.size() > MAX_INDEX_BYTES) {
+                        notes.remove(relative);
+                        failures.remove(relative);
+                        skipped.incrementAndGet();
+                        return FileVisitResult.CONTINUE;
+                    }
+                    Instant modifiedAt = attrs.lastModifiedTime().toInstant();
+                    IndexedNote existing = notes.get(relative);
+                    if (existing != null
+                            && existing.size() == attrs.size()
+                            && existing.updatedAt().equals(modifiedAt)) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    FailedFile attempt = new FailedFile(attrs.size(), modifiedAt);
+                    if (attempt.equals(failures.get(relative))) {
+                        // Unchanged since it last failed, so it would fail the same way again.
+                        failed.incrementAndGet();
+                        return FileVisitResult.CONTINUE;
+                    }
+                    boolean indexed;
+                    try {
+                        indexed = indexNote(vaultRoot, relative, fileService.readFile(path));
+                    } catch (IOException e) {
+                        indexed = false;
+                        log.warn("Failed to index {}: {}", path, e.getMessage());
+                    }
+                    if (indexed) {
+                        failures.remove(relative);
+                    } else {
+                        notes.remove(relative);
+                        failures.put(relative, attempt);
+                        failed.incrementAndGet();
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
             stale.forEach(notes::remove);
+            staleFailures.forEach(failures::remove);
             totalFiles = discoveredFiles.get();
             failedFiles = failed.get();
             skippedFiles = skipped.get();
@@ -218,12 +257,16 @@ public class IndexService {
             return false;
         }
         for (Path segment : vaultRoot.relativize(path)) {
-            String name = segment.toString();
-            if (name.startsWith(".") || name.endsWith(".assets")) {
+            if (isExcludedName(segment.toString())) {
                 return false;
             }
         }
         return true;
+    }
+
+    /** Hidden entries (.git, .nexttyproa-backups, ...) and a note's .assets folder hold no notes. */
+    private static boolean isExcludedName(String name) {
+        return name.startsWith(".") || name.endsWith(".assets");
     }
 
     private SearchHit match(IndexedNote note, String query, Set<SearchScope> scopes) {
@@ -500,6 +543,9 @@ public class IndexService {
             Instant updatedAt,
             long size
     ) {
+    }
+
+    private record FailedFile(long size, Instant modifiedAt) {
     }
 
     private record SearchHit(IndexedNote note, boolean matched, boolean bodyMatched, int titleIndex, double score) {
