@@ -1235,4 +1235,26 @@ describe('App (integration with mocked backend)', () => {
       expect(editorText()).toContain('甲的正文');
     }, 20000);
   });
+
+  // BUG_BACKLOG_REAL_WORLD.md RW-P3-003：真实键盘上 Ctrl+Shift+1 / Ctrl+Shift+3 没有反应，
+  // 因为 Shift 把 event.key 变成了 '!' / '#'
+  describe('RW-P3-003: Ctrl+Shift+1 / Ctrl+Shift+3 on a real keyboard', () => {
+    function isSidebarTabSelected(name: string): boolean {
+      return screen.getByRole('tab', { name }).getAttribute('aria-selected') === 'true';
+    }
+
+    it('opens the outline and file sidebars with the key events a US keyboard sends', async () => {
+      await openApp({ 'a.md': '# A\n\n正文\n' }, ['a.md']);
+      expect(isSidebarTabSelected('Files')).toBe(true);
+
+      // 美式键盘上的 Ctrl+Shift+1：key 是 '!'，code 仍是 Digit1
+      pressShortcut('!', { code: 'Digit1', shiftKey: true });
+      expect(isSidebarTabSelected('Outline')).toBe(true);
+      expect(isSidebarTabSelected('Files')).toBe(false);
+
+      pressShortcut('#', { code: 'Digit3', shiftKey: true });
+      expect(isSidebarTabSelected('Files')).toBe(true);
+      expect(isSidebarTabSelected('Outline')).toBe(false);
+    }, 20000);
+  });
 });

@@ -106,8 +106,15 @@ export function normalizeShortcut(shortcut: string): string {
   return [...ordered, key].join('+');
 }
 
-export function shortcutFromKeyboardEvent(event: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey' | 'key'>): string {
-  const key = normalizeKey(event.key);
+type ShortcutKeyEvent = Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey' | 'key'> & Partial<Pick<KeyboardEvent, 'code'>>;
+
+/** 数字行上的键按物理键位识别：Shift 会改变 event.key（美式键盘上 Shift+1 得到 '!'），event.code 始终是 Digit1 */
+function digitKeyOf(event: Partial<Pick<KeyboardEvent, 'code'>>): string {
+  return /^Digit(\d)$/.exec(event.code ?? '')?.[1] ?? '';
+}
+
+function shortcutWithKey(event: ShortcutKeyEvent, rawKey: string): string {
+  const key = normalizeKey(rawKey);
   if (!key || isModifierKey(key)) return '';
 
   return normalizeShortcut([
@@ -117,6 +124,10 @@ export function shortcutFromKeyboardEvent(event: Pick<KeyboardEvent, 'ctrlKey' |
     event.shiftKey ? 'Shift' : '',
     key,
   ].filter(Boolean).join('+'));
+}
+
+export function shortcutFromKeyboardEvent(event: ShortcutKeyEvent): string {
+  return shortcutWithKey(event, digitKeyOf(event) || event.key);
 }
 
 export function resolveShortcutBindings(overrides: Record<string, string[]> = {}): ShortcutBinding[] {
@@ -178,13 +189,17 @@ export function isKeyboardShortcutCandidate(shortcut: string): boolean {
 export function findShortcutAction(bindings: ShortcutBinding[], event: KeyboardEvent): string | undefined {
   if (event.defaultPrevented) return undefined;
 
-  const pressed = shortcutFromKeyboardEvent(event);
-  if (EDITOR_RESERVED_SHORTCUTS.has(pressed)) return undefined;
+  // 先按 event.key 的写法匹配：老版本录制的自定义快捷键（如 Ctrl+Shift+!）都是这样存的，不能被默认的 Ctrl+Shift+1 抢走；
+  // 没有匹配再按物理数字键匹配，这样真实键盘上的 Ctrl+Shift+1 才能触发默认快捷键
+  const pressed = Array.from(new Set([shortcutWithKey(event, event.key), shortcutWithKey(event, digitKeyOf(event))].filter(Boolean)));
+  if (pressed.some((shortcut) => EDITOR_RESERVED_SHORTCUTS.has(shortcut))) return undefined;
 
-  const action = bindings.find((binding) => (
-    binding.scope !== 'editor'
-    && (binding.keys ?? binding.defaultKeys).some((key) => normalizeShortcut(key) === pressed)
-  ))?.id;
+  const action = pressed
+    .map((shortcut) => bindings.find((binding) => (
+      binding.scope !== 'editor'
+      && (binding.keys ?? binding.defaultKeys).some((key) => normalizeShortcut(key) === shortcut)
+    ))?.id)
+    .find(Boolean);
 
   if (!action) return undefined;
 
