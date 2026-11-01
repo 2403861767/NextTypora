@@ -169,6 +169,19 @@ export interface AppSettings {
   writingModes?: Partial<WritingModeSettings>;
 }
 
+/** 工作区里残留的 .nexttyproa-backups 目录（保存时备份已于 1.0.3 移除，见 ADR-0001） */
+export interface LegacyBackupEntry {
+  /** 相对于工作区根目录、正斜杠分隔，可直接交给 trashItem */
+  path: string;
+  fileCount: number;
+  bytes: number;
+}
+
+export interface LegacyBackupScan {
+  directories: LegacyBackupEntry[];
+  totalBytes: number;
+}
+
 export interface ExternalTheme {
   id: string;
   name: string;

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, 
 import { ReloadOutlined, UndoOutlined } from '@ant-design/icons';
 import { Alert, Button, Input, Radio, Select, Space, Switch, Typography, message } from 'antd';
 import { AnimatePresence, motion } from 'motion/react';
-import type { ExternalTheme, PreferenceSettings, ShortcutBinding } from '../types';
+import type { ExternalTheme, LegacyBackupScan, PreferenceSettings, ShortcutBinding } from '../types';
+import { scanLegacyBackups } from '../api';
 import { persistPreferenceSettings } from '../utils/appSettings';
 import { fadeSoftMotion, sheetRevealMotion } from '../utils/motionPresets';
 import { testPicGoConnection } from '../utils/picgo';
@@ -17,6 +18,18 @@ import {
 } from '../utils/shortcuts';
 
 const { Text, Paragraph } = Typography;
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
 
 const SHORTCUT_CATEGORY_LABELS: Record<ShortcutBinding['category'], string> = {
   file: '文件',
@@ -43,6 +56,9 @@ export function SettingsModal({ open, initial, onClose, onSaved }: SettingsModal
   const [saving, setSaving] = useState(false);
   const [recordingShortcutId, setRecordingShortcutId] = useState<string | null>(null);
   const [externalThemes, setExternalThemes] = useState<ExternalTheme[]>([]);
+  const [backupScan, setBackupScan] = useState<LegacyBackupScan | null>(null);
+  const [scanningBackups, setScanningBackups] = useState(false);
+  const [cleaningBackups, setCleaningBackups] = useState(false);
   const [loadingThemes, setLoadingThemes] = useState(false);
 
   // App 每次渲染都会传入新的 initial 对象：只在打开对话框时用它重置草稿，否则轮询引起的重新渲染会冲掉未保存的修改
@@ -70,6 +86,48 @@ export function SettingsModal({ open, initial, onClose, onSaved }: SettingsModal
     } finally {
       setTesting(false);
     }
+  };
+
+  const handleScanBackups = async () => {
+    setScanningBackups(true);
+    try {
+      setBackupScan(await scanLegacyBackups());
+    } catch (error) {
+      setBackupScan(null);
+      message.error(error instanceof Error ? error.message : '扫描备份目录失败');
+    } finally {
+      setScanningBackups(false);
+    }
+  };
+
+  // 删除走 Electron 的 shell.trashItem（系统回收站，可撤销），后端不删任何东西
+  const handleCleanBackups = async () => {
+    const trashItem = window.nextTyproa?.trashItem;
+    if (!trashItem) {
+      message.error('当前环境无法访问系统回收站，请在桌面应用中操作。');
+      return;
+    }
+    const targets = backupScan?.directories ?? [];
+    if (targets.length === 0) return;
+
+    setCleaningBackups(true);
+    const failed: string[] = [];
+    for (const entry of targets) {
+      try {
+        await trashItem(entry.path);
+      } catch {
+        failed.push(entry.path);
+      }
+    }
+    setCleaningBackups(false);
+
+    if (failed.length > 0) {
+      message.error(`${failed.length} 个目录没能移到回收站：${failed.join('、')}`);
+    } else {
+      message.success(`已把 ${targets.length} 个备份目录移到回收站`);
+    }
+    // 不论成败都重新扫描，让面板显示的是磁盘上的真实情况
+    await handleScanBackups();
   };
 
   const handleSave = async () => {
@@ -270,6 +328,45 @@ export function SettingsModal({ open, initial, onClose, onSaved }: SettingsModal
             onChange={(checked) => setDraft((prev) => ({ ...prev, spellCheckEnabled: checked }))}
           />
         </div>
+      </section>
+
+      <section className="settings-section">
+        <Text className="settings-section-title">存储</Text>
+        <Paragraph type="secondary" className="settings-hint">
+          1.0.3 起保存时不再生成备份文件。老工作区里残留的 <code>.nexttyproa-backups</code> 目录可以在这里清掉；
+          它们会被移到系统回收站，不是永久删除。
+        </Paragraph>
+        <Space wrap>
+          <Button loading={scanningBackups} onClick={handleScanBackups}>扫描残留备份</Button>
+          {backupScan && backupScan.directories.length > 0 && (
+            <Button danger loading={cleaningBackups} onClick={handleCleanBackups}>
+              移到回收站
+            </Button>
+          )}
+        </Space>
+        {backupScan && (
+          <Alert
+            className="settings-backup-result"
+            type={backupScan.directories.length > 0 ? 'warning' : 'success'}
+            showIcon
+            message={
+              backupScan.directories.length > 0
+                ? `找到 ${backupScan.directories.length} 个备份目录，共 ${formatBytes(backupScan.totalBytes)}`
+                : '当前工作区没有残留的备份目录'
+            }
+            description={
+              backupScan.directories.length > 0 ? (
+                <ul className="settings-backup-list">
+                  {backupScan.directories.map((entry) => (
+                    <li key={entry.path}>
+                      {entry.path}（{entry.fileCount} 个文件，{formatBytes(entry.bytes)}）
+                    </li>
+                  ))}
+                </ul>
+              ) : undefined
+            }
+          />
+        )}
       </section>
 
       <section className="settings-section">

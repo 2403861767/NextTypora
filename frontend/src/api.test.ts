@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, deleteNote, deletePath, describeError, exportHtml, getNote, movePath, refreshWorkspace, searchNotes } from './api';
+import { ApiError, deleteNote, deletePath, describeError, exportHtml, getNote, movePath, refreshWorkspace, scanLegacyBackups, searchNotes } from './api';
 
 function jsonResponse(body: unknown) {
   return Promise.resolve({
@@ -208,6 +208,28 @@ describe('api wrappers', () => {
       'http://127.0.0.1:8080/api/search?q=asset+refs&sort=relevance&limit=5&offset=0&scope=body',
       expect.any(Object),
     );
+  });
+
+  // V103-04：SettingsModal 的用例把整个 api 模块 mock 掉了，所以 URL 只能在这里被真正断言
+  it('scans legacy backup directories with a plain GET and no body', async () => {
+    const fetchMock = vi.fn(() => jsonResponse({
+      directories: [{ path: '项目2026/.nexttyproa-backups', fileCount: 10, bytes: 2048 }],
+      totalBytes: 2048,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await scanLegacyBackups();
+
+    expect(result.directories[0].path).toBe('项目2026/.nexttyproa-backups');
+    expect(result.totalBytes).toBe(2048);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:8080/api/maintenance/legacy-backups',
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-Auth-Token': expect.any(String) }) }),
+    );
+    // 只读端点：不该带 method 覆盖或请求体
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.body).toBeUndefined();
+    expect(init.method ?? 'GET').toBe('GET');
   });
 });
 

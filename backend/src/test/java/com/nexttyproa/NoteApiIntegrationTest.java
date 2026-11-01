@@ -1284,4 +1284,32 @@ class NoteApiIntegrationTest {
                 .andExpect(jsonPath("$.total").value(1))
                 .andExpect(jsonPath("$.results[0].path").value("external.md"));
     }
+    // V103-04：/api/maintenance/legacy-backups 只报告，不删任何东西；删除由渲染进程走系统回收站
+    @Test
+    void maintenanceEndpointReportsLegacyBackupDirectoriesWithoutDeletingThem() throws Exception {
+        configureWorkspace();
+        Path backupDir = tempVault.resolve("项目2026/.nexttyproa-backups");
+        Files.createDirectories(backupDir);
+        Files.writeString(backupDir.resolve("需求.md.2026-09-25T000000Z.bak"), "12345");
+
+        mockMvc.perform(get("/api/maintenance/legacy-backups")
+                        .header("X-Auth-Token", TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.directories", hasSize(1)))
+                .andExpect(jsonPath("$.directories[0].path").value("项目2026/.nexttyproa-backups"))
+                .andExpect(jsonPath("$.directories[0].fileCount").value(1))
+                .andExpect(jsonPath("$.totalBytes").value(5));
+
+        // 扫描之后文件还在：后端不删用户的东西
+        assertThat(Files.exists(backupDir.resolve("需求.md.2026-09-25T000000Z.bak"))).isTrue();
+    }
+
+    @Test
+    void maintenanceEndpointNeedsTheAuthToken() throws Exception {
+        configureWorkspace();
+
+        mockMvc.perform(get("/api/maintenance/legacy-backups"))
+                .andExpect(status().isUnauthorized());
+    }
+
 }

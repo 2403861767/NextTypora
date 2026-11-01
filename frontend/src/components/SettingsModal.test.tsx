@@ -3,6 +3,9 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EditorTab, PreferenceSettings } from '../types';
 import { SettingsModal } from './SettingsModal';
 
+vi.mock('../api', () => ({ scanLegacyBackups: vi.fn() }));
+const { scanLegacyBackups } = await import('../api');
+
 const CSS_PLACEHOLDER = '.ProseMirror p { line-height: 1.8; }';
 const TYPED_CSS = '.ProseMirror p { color: red; }';
 
@@ -114,5 +117,100 @@ describe('SettingsModal draft', () => {
     expect((stored.openTabs as EditorTab[]).map((item) => item.path)).toEqual(['a.md', 'b.md']);
     expect(stored.activeTabPath).toBe('b.md');
     expect(stored.writingModes).toEqual({ focusMode: true, typewriterMode: false, distractionFreeMode: false });
+  });
+});
+
+// V103-04：1.0.3 移除保存时备份后，老工作区里残留的 .nexttyproa-backups 目录
+// 要能被扫出来并移到系统回收站（可撤销），而不是永久删除，也不自动删
+describe('SettingsModal 存储区块', () => {
+  beforeAll(() => {
+    if (!('ResizeObserver' in window)) {
+      vi.stubGlobal('ResizeObserver', class ResizeObserver {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      });
+    }
+  });
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    vi.mocked(scanLegacyBackups).mockReset();
+    delete (window as { nextTyproa?: unknown }).nextTyproa;
+  });
+
+  const open = () => render(<SettingsModal open initial={settings()} onClose={vi.fn()} onSaved={vi.fn()} />);
+  const scanButton = () => within(dialog()).getByRole('button', { name: '扫描残留备份' });
+
+  it('扫描结果为空时给出明确反馈，而不是一声不响', async () => {
+    vi.mocked(scanLegacyBackups).mockResolvedValue({ directories: [], totalBytes: 0 });
+    open();
+
+    fireEvent.click(scanButton());
+
+    expect(await within(dialog()).findByText('当前工作区没有残留的备份目录')).toBeTruthy();
+    // 没东西可删，就不该出现删除按钮
+    expect(within(dialog()).queryByRole('button', { name: '移到回收站' })).toBeNull();
+  });
+
+  it('先报出目录数与总体积，并逐个列出来，然后才给删除按钮', async () => {
+    vi.mocked(scanLegacyBackups).mockResolvedValue({
+      directories: [
+        { path: '项目2026/.nexttyproa-backups', fileCount: 10, bytes: 2048 },
+        { path: '日记/.nexttyproa-backups', fileCount: 3, bytes: 1024 },
+      ],
+      totalBytes: 3072,
+    });
+    open();
+
+    fireEvent.click(scanButton());
+
+    expect(await within(dialog()).findByText('找到 2 个备份目录，共 3.0 KB')).toBeTruthy();
+    expect(within(dialog()).getByText(/项目2026\/\.nexttyproa-backups（10 个文件，2\.0 KB）/)).toBeTruthy();
+    expect(within(dialog()).getByText(/日记\/\.nexttyproa-backups（3 个文件，1\.0 KB）/)).toBeTruthy();
+    expect(within(dialog()).getByRole('button', { name: '移到回收站' })).toBeTruthy();
+  });
+
+  it('确认后把每个目录交给系统回收站，并重新扫描', async () => {
+    const trashItem = vi.fn().mockResolvedValue(undefined);
+    (window as { nextTyproa?: unknown }).nextTyproa = { trashItem };
+    vi.mocked(scanLegacyBackups)
+      .mockResolvedValueOnce({
+        directories: [
+          { path: '项目2026/.nexttyproa-backups', fileCount: 10, bytes: 2048 },
+          { path: '日记/.nexttyproa-backups', fileCount: 3, bytes: 1024 },
+        ],
+        totalBytes: 3072,
+      })
+      .mockResolvedValueOnce({ directories: [], totalBytes: 0 });
+    open();
+
+    fireEvent.click(scanButton());
+    fireEvent.click(await within(dialog()).findByRole('button', { name: '移到回收站' }));
+
+    await waitFor(() => expect(trashItem.mock.calls).toEqual([
+      ['项目2026/.nexttyproa-backups'],
+      ['日记/.nexttyproa-backups'],
+    ]));
+    // 删完重新扫描，面板显示磁盘的真实情况
+    expect(await within(dialog()).findByText('当前工作区没有残留的备份目录')).toBeTruthy();
+    expect(vi.mocked(scanLegacyBackups)).toHaveBeenCalledTimes(2);
+  });
+
+  it('没有回收站通路时不动用户的文件', async () => {
+    vi.mocked(scanLegacyBackups).mockResolvedValue({
+      directories: [{ path: '日记/.nexttyproa-backups', fileCount: 1, bytes: 10 }],
+      totalBytes: 10,
+    });
+    open();
+
+    fireEvent.click(scanButton());
+    fireEvent.click(await within(dialog()).findByRole('button', { name: '移到回收站' }));
+
+    // 必须告诉用户为什么没动，而不是静默失败
+    expect(await screen.findByText(/无法访问系统回收站/)).toBeTruthy();
+    // 只扫过一次：没有删除通路就不该触发重新扫描，更不该有别的删除退路
+    await waitFor(() => expect(vi.mocked(scanLegacyBackups)).toHaveBeenCalledTimes(1));
   });
 });

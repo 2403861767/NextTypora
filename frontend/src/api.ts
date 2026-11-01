@@ -2,6 +2,7 @@ import type {
   BackendConfig,
   ExportHtmlResult,
   FileOperationResult,
+  LegacyBackupScan,
   Note,
   SearchIndexStatus,
   SearchRequest,
@@ -206,6 +207,10 @@ export function exportHtml(path: string): Promise<ExportHtmlResult> {
     method: 'POST',
     body: JSON.stringify({ path }),
   });
+}
+
+export function scanLegacyBackups(): Promise<LegacyBackupScan> {
+  return request('/api/maintenance/legacy-backups');
 }
 
 export function deleteNote(path: string): Promise<void> {
