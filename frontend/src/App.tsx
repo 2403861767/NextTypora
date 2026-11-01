@@ -68,6 +68,7 @@ import { StatusBar } from './components/StatusBar';
 import { useFindReplace } from './hooks/useFindReplace';
 import { useSearchPanel } from './hooks/useSearchPanel';
 import type { AppThemeId, EditorTab, ImageUploadSettings, Note, PreferenceSettings, RecentFileRef, RecentWorkspaceRef, TreeNode, TreeSelection, WritingModeSettings } from './types';
+import { renderMathInExportedHtml } from './utils/exportMath';
 import { loadAndApplyPreferenceSettings, patchStoredAppSettings } from './utils/appSettings';
 import { windowsFileNameError, windowsPathError } from './utils/fileName';
 import { joinLocalPath, parseLocalMarkdownPath, foldersEqual, relativePathInFolder } from './utils/localPath';
@@ -1274,7 +1275,10 @@ export default function App() {
       return null;
     }
 
-    return exportHtml(selectedPath);
+    const exported = await exportHtml(selectedPath);
+    // 后端只负责 markdown→HTML；公式在这里用已有的 KaTeX 渲染成 MathML，
+    // 两条导出通路（HTML 与 PDF）因此都能保留公式。见 docs/adr/0003-export-fidelity-in-renderer.md
+    return { ...exported, html: renderMathInExportedHtml(exported.html) };
   }, [flushSave, saveConflict, selectedPath, showError]);
 
   const handleExportHtml = useCallback(async () => {
