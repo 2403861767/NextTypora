@@ -212,7 +212,9 @@ describe('api wrappers', () => {
 
   // V103-04：SettingsModal 的用例把整个 api 模块 mock 掉了，所以 URL 只能在这里被真正断言
   it('scans legacy backup directories with a plain GET and no body', async () => {
-    const fetchMock = vi.fn(() => jsonResponse({
+    // 参数要显式标注：vi.fn(() => ...) 推断出的 calls 是空元组，取 [0][1] 过不了
+    // `npm run build` 的类型检查（vitest 本身不做类型检查，所以只跑测试看不出来）
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
       directories: [{ path: '项目2026/.nexttyproa-backups', fileCount: 10, bytes: 2048 }],
       totalBytes: 2048,
     }));
@@ -227,9 +229,9 @@ describe('api wrappers', () => {
       expect.objectContaining({ headers: expect.objectContaining({ 'X-Auth-Token': expect.any(String) }) }),
     );
     // 只读端点：不该带 method 覆盖或请求体
-    const init = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(init.body).toBeUndefined();
-    expect(init.method ?? 'GET').toBe('GET');
+    const init = fetchMock.mock.calls[0][1];
+    expect(init?.body).toBeUndefined();
+    expect(init?.method ?? 'GET').toBe('GET');
   });
 });
 

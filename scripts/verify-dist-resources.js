@@ -3,8 +3,21 @@ const path = require('path');
 
 const projectRoot = path.join(__dirname, '..');
 
+/** 期望发布的版本号：命令行 --expect-version <v> 优先，其次环境变量 EXPECT_VERSION。 */
+function readExpectedVersion() {
+  const flagIndex = process.argv.indexOf('--expect-version');
+  if (flagIndex !== -1 && process.argv[flagIndex + 1]) {
+    return process.argv[flagIndex + 1].trim();
+  }
+  const inline = process.argv.find((arg) => arg.startsWith('--expect-version='));
+  if (inline) {
+    return inline.slice('--expect-version='.length).trim();
+  }
+  return (process.env.EXPECT_VERSION || '').trim() || null;
+}
+
 const requiredPaths = [
-  path.join(projectRoot, 'backend', 'target', 'backend-1.0.0.jar'),
+  path.join(projectRoot, 'backend', 'target', 'backend.jar'),
   path.join(projectRoot, 'resources', 'backend.jar'),
   path.join(projectRoot, 'frontend', 'dist', 'index.html'),
   path.join(projectRoot, 'electron', 'main.js'),
@@ -30,6 +43,30 @@ if (!build.productName || !build.appId) {
 
 if (!String(build.artifactName || '').includes('${version}')) {
   console.error('Release artifactName should include ${version}.');
+  ok = false;
+}
+
+// 这里检查的是 version 的"值"，不只是 artifactName 模板里有没有 ${version}。
+// 1.0.2 就是这样错出去的：模板是对的，值一直停在 1.0.0，产物被手工改名成 1.0.2，
+// 而 latest.yml 和 .blockmap 都还停在 1.0.0。见 .scratch/v1.0.3/issues/06-...
+const expectedVersion = readExpectedVersion();
+if (!expectedVersion) {
+  console.error(
+    `Refusing to verify without an expected version.
+`
+    + `  package.json currently says ${packageJson.version}.
+`
+    + `  Re-run as: npm run dist:verify -- --expect-version ${packageJson.version}
+`
+    + `  (or set EXPECT_VERSION). Stating the version you are releasing is the point:`
+    + ` it is the one moment a machine can catch a stale version number.`,
+  );
+  ok = false;
+} else if (packageJson.version !== expectedVersion) {
+  console.error(
+    `Version mismatch: package.json says ${packageJson.version}, `
+    + `but you said you are releasing ${expectedVersion}.`,
+  );
   ok = false;
 }
 

@@ -48,6 +48,9 @@
     </dependencies>
 
     <build>
+        <!-- 产物名与版本号解耦：带版本的 jar 名曾被两个脚本写死，导致"改版本号"本身会弄断构建。
+             见 .scratch/v1.0.3/issues/05-decouple-jar-name-from-version.md -->
+        <finalName>backend</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

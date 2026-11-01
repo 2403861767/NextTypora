@@ -1,6 +1,6 @@
 {
   "name": "nexttyproa",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "A Typora-like markdown note desktop app",
   "main": "electron/main.js",
   "author": "nextTyproa",

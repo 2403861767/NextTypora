@@ -69,7 +69,7 @@ nextTyproa/
 
 普通用户可以直接在 GitHub Releases 页面下载 Windows 版安装包：
 
-* `NextTyproa-1.0.0-win-x64.exe`：Windows 安装包，推荐日常使用。
+* `NextTyproa-<版本>-win-x64.exe`：Windows 安装包，推荐日常使用。版本号来自 `package.json`，由 electron-builder 自动写进文件名——不要手工改名，那样 `latest.yml` 和 `.blockmap` 会和产物对不上。
 
 * `NextTyproa-win-x64.zip`：免安装压缩包，解压后运行 `NextTyproa.exe`。
 
@@ -127,7 +127,7 @@ npm run dev:electron
 | ----------------------- | --------------------- |
 | `npm run dev`           | 同时启动后端、前端和 Electron   |
 | `npm run build`         | 构建后端与前端               |
-| `npm run dist:verify`   | 运行后端测试、构建项目并校验打包资源    |
+| `npm run dist:verify -- --expect-version <版本>` | 运行后端测试、构建项目并校验打包资源；必须说出要发的版本号，与 `package.json` 不一致就失败 |
 | `npm run dist`          | 构建 Windows ZIP 发行包    |
 | `npm run dist:dir`      | 构建 Windows 解包目录       |
 | `npm run dist:setup`    | 构建 Windows NSIS 安装包   |
@@ -152,7 +152,7 @@ mvn test
 建议先运行完整校验：
 
 ```bash
-npm run dist:verify
+npm run dist:verify -- --expect-version 1.0.3
 ```
 
 生成 Windows ZIP 发行包：
@@ -243,7 +243,7 @@ X-Auth-Token: <启动时打印的 token>
 欢迎提交 Issue 和 Pull Request。建议在提交前运行：
 
 ```bash
-npm run dist:verify
+npm run dist:verify -- --expect-version 1.0.3
 ```
 
 如果只修改前端，也建议额外运行：
