@@ -11,12 +11,16 @@
     "dev:electron": "wait-on http://127.0.0.1:8080/api/health http://127.0.0.1:5173 && cross-env BACKEND_PORT=8080 electron .",
     "dev": "node scripts/dev.js",
     "dev:all": "concurrently -k -n backend,frontend,electron -c blue,green,magenta \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:electron\"",
+    "test": "npm run test:electron && npm run test:backend && npm run test:frontend",
+    "test:frontend": "cd frontend && npm test",
+    "test:backend": "cd backend && mvn test",
+    "test:electron": "node --test \"electron/*.test.js\"",
+    "test:packaged": "node --test scripts/packaged-backend.test.js",
+    "test:coverage": "cd backend && mvn verify",
     "build:frontend": "cd frontend && npm run build",
     "build:backend": "cd backend && mvn -DskipTests package && node ../scripts/copy-backend-jar.js",
     "build": "npm run build:backend && npm run build:frontend",
-    "test:electron": "node --test \"electron/*.test.js\"",
-    "test:packaged": "node --test scripts/packaged-backend.test.js",
-    "dist:verify": "cd backend && mvn test && cd .. && npm run build && node scripts/verify-dist-resources.js",
+    "dist:verify": "npm test && npm run build && npm run prepare:resources && node scripts/verify-dist-resources.js",
     "prepare:resources": "node scripts/copy-backend-jar.js && node scripts/prepare-jre.js && npm run test:packaged",
     "dist": "npm run build && npm run prepare:resources && npx electron-builder --win dir && powershell -ExecutionPolicy Bypass -File scripts/package-zip.ps1",
     "dist:setup": "npm run build && npm run prepare:resources && npx electron-builder --win nsis",
@@ -71,13 +75,18 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
     "fileAssociations": [
       {
-        "ext": ["md", "markdown"],
+        "ext": [
+          "md",
+          "markdown"
+        ],
         "name": "Markdown Document",
         "description": "Markdown document",
         "role": "Editor"

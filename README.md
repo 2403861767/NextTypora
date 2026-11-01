@@ -127,7 +127,9 @@ npm run dev:electron
 | ----------------------- | --------------------- |
 | `npm run dev`           | 同时启动后端、前端和 Electron   |
 | `npm run build`         | 构建后端与前端               |
-| `npm run dist:verify -- --expect-version <版本>` | 运行后端测试、构建项目并校验打包资源；必须说出要发的版本号，与 `package.json` 不一致就失败 |
+| `npm test`              | 跑全部自包含套件：Electron + 后端 + 前端 |
+| `npm run test:coverage` | 后端覆盖率门槛（service 包行覆盖 ≥ 80%） |
+| `npm run dist:verify -- --expect-version <版本>` | `npm test` + 构建 + 准备打包资源（含打包版测试）+ 校验；必须说出要发的版本号，与 `package.json` 不一致就失败 |
 | `npm run dist`          | 构建 Windows ZIP 发行包    |
 | `npm run dist:dir`      | 构建 Windows 解包目录       |
 | `npm run dist:setup`    | 构建 Windows NSIS 安装包   |
