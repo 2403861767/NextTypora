@@ -1,0 +1,24 @@
+# V103-16: 恢复被删掉的 1414 行缺陷史为归档
+
+Status: ready-for-agent
+Type: Change
+Commit prefix: `Change V103-16:`
+Spec section: 9（见 ../spec.md）
+
+## 背景
+
+`BUG_BACKLOG.md`（660 行）与 `BUG_BACKLOG_REAL_WORLD.md`（754 行）在 `ba867ca` 被整体删除并写进 `.gitignore:25-26`，磁盘上也不存在，只能用 `git show ba867ca^:<file>` 取回。
+
+两份里**未关闭条目为 0**——54 条全部 `[x]`。不是「有 bug 被埋了」，是「缺陷史被扔了」。
+
+## 改动
+
+- 用 `git show ba867ca^:<file>` 取回，放到 `docs/history/`
+- 从 `.gitignore` 删掉那两行
+- 同时删掉 `.gitignore` 里的 `test/`——e2e 夹具就是这么丢的
+
+## 为什么值得
+
+那 54 条记录是这个产品踩过的全部坑（编码检测、路径穿越、per-path 锁、孤儿进程、标签页恢复）。`CLAUDE.md` 里那些「⚠️ 关键安全规则」的**理由**就在这两份文件里，规则本身已经脱离了证据。而且其中的「未能覆盖」清单是 V103-17 唯一的现成依据。
+
+## Comments
