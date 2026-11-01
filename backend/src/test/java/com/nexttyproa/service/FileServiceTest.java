@@ -14,7 +14,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -176,47 +175,11 @@ class FileServiceTest {
         assertFalse(read.hasBom());
         assertEquals("# 标题\n中文内容", read.content());
 
-        fileService.writeFileAtomic(file, read.content() + "\n追加", read.encoding(), read.hasBom(), true);
+        fileService.writeFileAtomic(file, read.content() + "\n追加", read.encoding(), read.hasBom());
         assertEquals("# 标题\n中文内容\n追加", new String(Files.readAllBytes(file), Charset.forName("GBK")));
-        assertTrue(Files.exists(vaultRoot.resolve(".nexttyproa-backups")));
+        assertNoBackupDirectory(vaultRoot);
     }
 
-    @Test
-    void keepsOnlyNewestBackups(@TempDir Path vaultRoot) throws Exception {
-        Path file = vaultRoot.resolve("a.md");
-        Files.writeString(file, "v0", StandardCharsets.UTF_8);
-        Path backupDir = Files.createDirectory(vaultRoot.resolve(".nexttyproa-backups"));
-        for (int i = 0; i < 15; i++) {
-            Files.writeString(backupDir.resolve(fakeBackupName(i)), "old" + i);
-        }
-        Path otherFileBackup = Files.writeString(backupDir.resolve("a.md.old.md.2019-01-01T000000Z.bak"), "other");
-
-        fileService.writeFileAtomic(file, "v1", "UTF-8", false, true);
-
-        List<String> remaining;
-        try (Stream<Path> entries = Files.list(backupDir)) {
-            remaining = entries.map(p -> p.getFileName().toString())
-                    .filter(name -> name.startsWith("a.md.") && !name.startsWith("a.md.old.md."))
-                    .toList();
-        }
-        assertEquals(10, remaining.size());
-        for (int i = 0; i < 6; i++) {
-            assertFalse(remaining.contains(fakeBackupName(i)), fakeBackupName(i));
-        }
-        for (int i = 6; i < 15; i++) {
-            assertTrue(remaining.contains(fakeBackupName(i)), fakeBackupName(i));
-        }
-        assertTrue(remaining.stream().anyMatch(name -> !name.startsWith("a.md.2020-")), "new backup is kept");
-        assertTrue(Files.exists(otherFileBackup));
-    }
-
-    /**
-     * Fake i is 0.5s newer than fake i-1, alternating between whole and fractional seconds. The cut
-     * between #5 ("000003Z") and #6 ("000003-5Z") falls inside one second, where string order is wrong.
-     */
-    private static String fakeBackupName(int i) {
-        return String.format("a.md.2020-01-01T0000%02d%sZ.bak", (i + 1) / 2, i % 2 == 0 ? "-5" : "");
-    }
 
     @Test
     void detectsShortGbkThatIsAlsoValidUtf8(@TempDir Path vaultRoot) throws Exception {
@@ -242,7 +205,7 @@ class FileServiceTest {
         assertEquals("Big5", read.encoding());
         assertEquals(content, read.content());
 
-        fileService.writeFileAtomic(file, read.content() + "\n測試", read.encoding(), read.hasBom(), false);
+        fileService.writeFileAtomic(file, read.content() + "\n測試", read.encoding(), read.hasBom());
         assertEquals(content + "\n測試", new String(Files.readAllBytes(file), Charset.forName("Big5")));
     }
 
@@ -285,7 +248,7 @@ class FileServiceTest {
         assertTrue(read.hasBom());
         assertEquals("Hello", read.content());
 
-        fileService.writeFileAtomic(file, "World", read.encoding(), read.hasBom(), true);
+        fileService.writeFileAtomic(file, "World", read.encoding(), read.hasBom());
         byte[] saved = Files.readAllBytes(file);
         assertEquals((byte) 0xEF, saved[0]);
         assertEquals((byte) 0xBB, saved[1]);
@@ -316,11 +279,11 @@ class FileServiceTest {
         assertTrue(read.hasBom());
         assertEquals(content, read.content());
 
-        fileService.writeFileAtomic(file, read.content() + "\n追加", read.encoding(), read.hasBom(), true);
+        fileService.writeFileAtomic(file, read.content() + "\n追加", read.encoding(), read.hasBom());
         byte[] saved = Files.readAllBytes(file);
         assertArrayEquals(bom, Arrays.copyOf(saved, bom.length));
         assertEquals(content + "\n追加", new String(saved, bom.length, saved.length - bom.length, charset));
-        assertTrue(Files.exists(vaultRoot.resolve(".nexttyproa-backups")));
+        assertNoBackupDirectory(vaultRoot);
         assertEquals(content + "\n追加", fileService.readFileWithEncoding(file).content());
     }
 
@@ -400,5 +363,14 @@ class FileServiceTest {
         assertEquals("---", FileService.extractTitle("分隔线开头.md", "---\n\n分隔线之后的第一段正文。\n"));
         // ----- 不是 frontmatter 的分隔符
         assertEquals("-----", FileService.extractTitle("a.md", "-----\ntitle: x\n-----\n正文"));
+    }
+
+    /**
+     * 保存时不再产生备份目录，见 docs/adr/0001-no-save-time-backups.md。
+     * 这条断言是刻意的反向守卫：谁把保存时备份加回来，这些用例就会红。
+     */
+    private static void assertNoBackupDirectory(Path vaultRoot) {
+        assertFalse(Files.exists(vaultRoot.resolve(".nexttyproa-backups")),
+                "保存不应产生备份目录（ADR-0001）");
     }
 }

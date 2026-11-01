@@ -102,7 +102,7 @@ public class NoteService {
             }
             boolean hasBom = request.getHasBom() == null ? currentRead.hasBom() : request.getHasBom();
             boolean existed = fileService.exists(file);
-            fileService.writeFileAtomic(file, nextContent, encoding, hasBom, existed);
+            fileService.writeFileAtomic(file, nextContent, encoding, hasBom);
             if (existed && request.isForce()) {
                 audit.warn("Force-saved note, overwriting any external changes: {}", relativePath);
             }

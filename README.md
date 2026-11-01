@@ -26,7 +26,8 @@ NextTyproa 是一款受 Typora 启发的本地优先 Markdown 桌面笔记应用
 
 * **沉浸写作模式**：支持 Focus Mode、Typewriter Mode 和 Distraction Free Mode。
 
-* **编码保护**：支持 UTF-8、UTF-8 BOM、GBK、Big5、Shift-JIS 检测，保存时尽量沿用原编码并生成备份。
+* **编码保护**：支持 UTF-8、UTF-8 BOM、GBK、Big5、Shift-JIS、UTF-16 检测，保存时尽量沿用原编码，写入是「临时文件 + 原子重命名」。
+* **数据防线**：笔记在应用之外被改动时，保留你这一版并把对方那一版存成可见的 `*.conflict-<时间戳>.md`；删除走系统回收站。保存时不另外生成备份文件（1.0.3 起，见 [ADR-0001](docs/adr/0001-no-save-time-backups.md)）。
 
 * **桌面集成**：Electron 桌面壳支持 Markdown 文件关联、窗口菜单、偏好设置和本地后端代理。
 

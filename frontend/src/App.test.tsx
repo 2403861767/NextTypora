@@ -873,16 +873,17 @@ describe('App (integration with mocked backend)', () => {
   });
 
   // BUG_BACKLOG_REAL_WORLD.md RW-P2-008：删除是永久删除（确认框写着“此操作不可撤销”），没有回收站；
-  // 删除文件夹时，里面的 .nexttyproa-backups 备份也一起被永久删掉
+  // 删除文件夹时，里面的隐藏子目录也要一起走。夹具用的 .nexttyproa-backups 是 1.0.3 之前的遗留目录
+  // （保存时备份已移除，见 ADR-0001），但老工作区里仍然有
   describe('RW-P2-008: deleting notes and folders', () => {
     const NOTE = '日记/图片笔记.md';
     const FOLDER = '项目2026';
-    const BACKUP = `${FOLDER}/.nexttyproa-backups/需求 v1.2.md.2026-09-25T000000-000Z.bak`;
+    const LEGACY_HIDDEN = `${FOLDER}/.nexttyproa-backups/需求 v1.2.md.2026-09-25T000000-000Z.bak`;
     const VAULT: Record<string, string> = {
       [NOTE]: '# 图片笔记\n\n正文\n',
       [`${FOLDER}/需求 v1.2.md`]: '# 需求\n\n内容\n',
       [`${FOLDER}/子目录/深层笔记.md`]: '# 深层\n\n内容\n',
-      [BACKUP]: '# 需求\n\n旧版本\n',
+      [LEGACY_HIDDEN]: '# 需求\n\n旧版本\n',
       'a.md': '# A\n\n另一篇\n',
     };
     /** 系统回收站的替身：Electron 的 shell.trashItem 把文件从磁盘移到这里，之后还能找回 */
@@ -958,7 +959,7 @@ describe('App (integration with mocked backend)', () => {
       expect(within(screen.getByLabelText('文件树根目录')).queryByText('图片笔记.md')).toBeNull();
     }, 20000);
 
-    it('deleting a folder moves the whole folder to the recycle bin, backups included', async () => {
+    it('deleting a folder moves the whole folder to the recycle bin, hidden entries included', async () => {
       const trashItem = stubRecycleBin();
       await openApp(VAULT, ['a.md']);
 
@@ -967,8 +968,8 @@ describe('App (integration with mocked backend)', () => {
       await waitFor(() => expect(workspaceFiles().some((path) => path.startsWith(`${FOLDER}/`))).toBe(false), { timeout: 5000 });
       expect(trashItem.mock.calls).toEqual([[FOLDER]]);
       expect(api.deletePath).not.toHaveBeenCalled();
-      expect([...recycleBin.keys()].sort()).toEqual([BACKUP, `${FOLDER}/子目录/深层笔记.md`, `${FOLDER}/需求 v1.2.md`].sort());
-      expect(recycleBin.get(BACKUP)).toBe(VAULT[BACKUP]);
+      expect([...recycleBin.keys()].sort()).toEqual([LEGACY_HIDDEN, `${FOLDER}/子目录/深层笔记.md`, `${FOLDER}/需求 v1.2.md`].sort());
+      expect(recycleBin.get(LEGACY_HIDDEN)).toBe(VAULT[LEGACY_HIDDEN]);
       await settle(300);
       // 只看文件树：已关闭的确认框（停在离场动画）里还留着文件夹名
       expect(within(screen.getByLabelText('文件树根目录')).queryByText(FOLDER)).toBeNull();

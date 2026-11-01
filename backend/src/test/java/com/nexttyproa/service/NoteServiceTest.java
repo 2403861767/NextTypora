@@ -72,7 +72,7 @@ class NoteServiceTest {
     }
 
     @Test
-    void forceSaveOverwritesExternalEditAndKeepsBackup(@TempDir Path vaultRoot) throws Exception {
+    void forceSaveOverwritesExternalEditWithoutLeavingABackup(@TempDir Path vaultRoot) throws Exception {
         NoteService noteService = noteService(vaultRoot);
         noteService.createNote(createRequest("note.md", "original"));
         Files.writeString(vaultRoot.resolve("note.md"), "edited externally");
@@ -80,7 +80,8 @@ class NoteServiceTest {
         noteService.saveNote(saveRequest("note.md", "forced", "stale-hash", true));
 
         assertEquals("forced", Files.readString(vaultRoot.resolve("note.md")));
-        assertEquals(List.of("edited externally"), backupContents(vaultRoot, "note.md"));
+        // 外部那一版不再被留存：强制保存就是用户明确选择丢弃它（见 ADR-0001）
+        assertNoBackupDirectory(vaultRoot);
     }
 
     @Test
@@ -90,7 +91,7 @@ class NoteServiceTest {
         noteService.saveNote(saveRequest("new/中文笔记.md", "内容", null, false));
 
         assertEquals("内容", Files.readString(vaultRoot.resolve("new/中文笔记.md")));
-        assertTrue(backupContents(vaultRoot.resolve("new"), "中文笔记.md").isEmpty());
+        assertNoBackupDirectory(vaultRoot.resolve("new"));
     }
 
     // BUG_BACKLOG_REAL_WORLD.md RW-P1-003：编辑器带着 baseHash 保存，说明它编辑的是一个已存在的文件；
@@ -307,20 +308,12 @@ class NoteServiceTest {
         return request;
     }
 
-    private static List<String> backupContents(Path dir, String fileName) throws Exception {
-        Path backupDir = dir.resolve(".nexttyproa-backups");
-        if (!Files.isDirectory(backupDir)) {
-            return List.of();
-        }
-        try (Stream<Path> entries = Files.list(backupDir)) {
-            List<Path> backups = entries
-                    .filter(p -> p.getFileName().toString().startsWith(fileName + ".") && p.toString().endsWith(".bak"))
-                    .toList();
-            List<String> contents = new ArrayList<>();
-            for (Path backup : backups) {
-                contents.add(Files.readString(backup, StandardCharsets.UTF_8));
-            }
-            return contents;
-        }
+    /**
+     * 保存时不再产生备份目录，见 docs/adr/0001-no-save-time-backups.md。
+     * 反向守卫：谁把保存时备份加回来，这些用例就会红。
+     */
+    private static void assertNoBackupDirectory(Path dir) {
+        assertFalse(Files.isDirectory(dir.resolve(".nexttyproa-backups")),
+                "保存不应产生备份目录（ADR-0001）");
     }
 }

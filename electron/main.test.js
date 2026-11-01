@@ -345,7 +345,9 @@ test('RW-P2-008: file:trashItem moves a note of the current workspace to the rec
   assert.equal(workspaceRequest?.headers['X-Auth-Token'], 'test-token');
 });
 
-test('RW-P2-008: file:trashItem moves a folder as a whole, so its backups stay recoverable', async (t) => {
+// 夹具里的 .nexttyproa-backups 是 1.0.3 之前留下的遗留目录（保存时备份已移除，见 ADR-0001），
+// 但老工作区里仍然有，所以整体移动必须把隐藏子目录一起带走
+test('RW-P2-008: file:trashItem moves a folder as a whole, hidden subdirectories included', async (t) => {
   const { vault } = trashWorkspace(t);
   const app = await bootApp(t, { workspace: vault });
 

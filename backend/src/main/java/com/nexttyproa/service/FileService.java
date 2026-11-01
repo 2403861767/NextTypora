@@ -22,14 +22,8 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -46,10 +40,6 @@ public class FileService {
     private static final String DEFAULT_ENCODING = "UTF-8";
     private static final int BINARY_SCAN_LIMIT = 8192;
     private static final String[] LEGACY_ENCODINGS = {"GBK", "Big5", "Shift_JIS"};
-    private static final String BACKUP_DIR_NAME = ".nexttyproa-backups";
-    private static final int MAX_BACKUPS_PER_FILE = 10;
-    // Instant.toString() with ':' removed and '.' replaced by '-', e.g. 2026-09-24T101530-123456Z
-    private static final Pattern BACKUP_TIMESTAMP = Pattern.compile("(\\d{4}-\\d{2}-\\d{2})T(\\d{2})(\\d{2})(\\d{2})(?:-(\\d{1,9}))?Z");
     private static final boolean IS_WINDOWS = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
     private static final String WINDOWS_INVALID_CHARS = "<>:\"/\\|?*";
     private static final Pattern WINDOWS_RESERVED_NAME = Pattern.compile("(?i)CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]");
@@ -211,19 +201,20 @@ public class FileService {
     }
 
     public void writeFileAtomic(Path file, String content) throws IOException {
-        writeFileAtomic(file, content, DEFAULT_ENCODING, false, false);
+        writeFileAtomic(file, content, DEFAULT_ENCODING, false);
     }
 
-    public void writeFileAtomic(Path file, String content, String encoding, boolean hasBom, boolean backupExisting) throws IOException {
+    /**
+     * 保存时不做备份，这是刻意的决定，见 {@code docs/adr/0001-no-save-time-backups.md}。
+     * 数据防线是另外两条：应用之外的改动留下可见的冲突副本，删除走系统回收站。
+     */
+    public void writeFileAtomic(Path file, String content, String encoding, boolean hasBom) throws IOException {
         if (Files.exists(file) && !Files.isWritable(file)) {
             throw new IOException("File is read-only: " + file);
         }
         Path parent = file.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
-        }
-        if (backupExisting && Files.exists(file)) {
-            backupFile(file);
         }
         String safeContent = content == null ? "" : content;
         Path temp = Files.createTempFile(parent != null ? parent : file.toAbsolutePath().getParent(), ".nexttyproa-", ".tmp");
@@ -245,70 +236,6 @@ public class FileService {
             }
         } finally {
             Files.deleteIfExists(temp);
-        }
-    }
-
-    public void backupFile(Path file) throws IOException {
-        if (!Files.exists(file) || Files.isDirectory(file)) {
-            return;
-        }
-        Path parent = file.getParent() == null ? file.toAbsolutePath().getParent() : file.getParent();
-        Path backupDir = parent.resolve(BACKUP_DIR_NAME);
-        Files.createDirectories(backupDir);
-        String timestamp = Instant.now().toString().replace(":", "").replace(".", "-");
-        String fileName = file.getFileName().toString();
-        Files.copy(file, backupDir.resolve(fileName + "." + timestamp + ".bak"), StandardCopyOption.REPLACE_EXISTING);
-        pruneBackups(backupDir, fileName);
-    }
-
-    /**
-     * Keeps only the newest {@link #MAX_BACKUPS_PER_FILE} backups of one file. Best-effort: a failure
-     * here must never fail the save that triggered it.
-     */
-    private void pruneBackups(Path backupDir, String fileName) {
-        String prefix = fileName + ".";
-        String suffix = ".bak";
-        List<Map.Entry<Instant, Path>> backups = new ArrayList<>();
-        try (Stream<Path> entries = Files.list(backupDir)) {
-            entries.forEach(entry -> {
-                String name = entry.getFileName().toString();
-                if (name.length() <= prefix.length() + suffix.length()
-                        || !name.startsWith(prefix) || !name.endsWith(suffix)) {
-                    return;
-                }
-                // Exact match on the timestamp keeps backups of e.g. "a.md.old.md" out of "a.md"'s set.
-                Instant created = parseBackupTimestamp(name.substring(prefix.length(), name.length() - suffix.length()));
-                if (created != null) {
-                    backups.add(Map.entry(created, entry));
-                }
-            });
-        } catch (IOException e) {
-            log.warn("Failed to list backups in {}", backupDir, e);
-            return;
-        }
-        if (backups.size() <= MAX_BACKUPS_PER_FILE) {
-            return;
-        }
-        backups.sort(Map.Entry.<Instant, Path>comparingByKey(Comparator.reverseOrder()));
-        for (Map.Entry<Instant, Path> stale : backups.subList(MAX_BACKUPS_PER_FILE, backups.size())) {
-            try {
-                Files.deleteIfExists(stale.getValue());
-            } catch (IOException e) {
-                log.warn("Failed to delete old backup {}", stale.getValue(), e);
-            }
-        }
-    }
-
-    private static Instant parseBackupTimestamp(String timestamp) {
-        Matcher m = BACKUP_TIMESTAMP.matcher(timestamp);
-        if (!m.matches()) {
-            return null;
-        }
-        String fraction = m.group(5) == null ? "" : "." + m.group(5);
-        try {
-            return Instant.parse(m.group(1) + "T" + m.group(2) + ":" + m.group(3) + ":" + m.group(4) + fraction + "Z");
-        } catch (java.time.format.DateTimeParseException e) {
-            return null;
         }
     }
 
