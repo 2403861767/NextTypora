@@ -25,5 +25,3 @@ release/
 # 于是新建的后端测试文件会被静默忽略（git add 拒绝、git status 不显示）。
 # e2e 夹具就是这样在 799a03f 里丢掉的。见 .scratch/v1.0.3/issues/16。
 /test/
-BUG_BACKLOG.md
-BUG_BACKLOG_REAL_WORLD.md
