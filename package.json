@@ -32,7 +32,7 @@
   },
   "build": {
     "appId": "com.nexttyproa.app",
-    "productName": "NextTyproa",
+    "productName": "NextTypora",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "electronDist": "node_modules/electron/dist",
     "directories": {
@@ -62,12 +62,12 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "NextTyproa",
+      "shortcutName": "NextTypora",
       "include": "build/installer.nsh"
     },
     "win": {
       "icon": "build/icon.ico",
-      "publisherName": "NextTyproa",
+      "publisherName": "NextTypora",
       "target": [
         {
           "target": "nsis",

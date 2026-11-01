@@ -40,6 +40,7 @@ function createFakeElectron() {
     whenReady: () => Promise.resolve(),
     getPath: (name) => `fake-${name}`,
     getVersion: () => '1.0.3',
+    setName: (name) => { state.appName = name; },
     getAppPath: () => __dirname,
     // app.quit()：先发 before-quit（可取消），再依次关闭所有窗口；有窗口没关掉则退出中止
     quit() {
@@ -391,4 +392,21 @@ test('V103-07: app:getVersion hands the renderer the version from the main proce
   const app = await bootApp(t);
 
   assert.equal(await app.invoke('app:getVersion'), '1.0.3');
+});
+
+// V103-12：显示名改成了正确拼写 NextTypora，但应用身份必须留在旧的 NextTyproa——
+// userData 路径取自 app.getName()，跟着改名会让已安装用户的 settings.json 和 themes/
+// 留在旧目录里，主题/快捷键/最近工作区/打开的标签页全部静默丢失。见 ADR-0002。
+test('V103-12: the app identity stays NextTyproa so existing settings keep working', async (t) => {
+  const app = await bootApp(t);
+
+  assert.equal(app.fake.state.appName, 'NextTyproa');
+});
+
+test('V103-12: the display name in package.json is the correct spelling', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+
+  assert.equal(pkg.build.productName, 'NextTypora');
+  // appId 不能跟着改：Windows 会当成另一个软件，旧版不被覆盖，用户机器上留下两个安装
+  assert.equal(pkg.build.appId, 'com.nexttyproa.app');
 });

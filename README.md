@@ -1,6 +1,6 @@
-# NextTyproa
+# NextTypora
 
-NextTyproa 是一款受 Typora 启发的本地优先 Markdown 桌面笔记应用，专注于流畅写作、文件夹即工作区、所见即所得编辑和低干扰的阅读体验。
+NextTypora 是一款受 Typora 启发的本地优先 Markdown 桌面笔记应用，专注于流畅写作、文件夹即工作区、所见即所得编辑和低干扰的阅读体验。
 
 项目由 **凉风辞叶** 开发维护。
 
@@ -69,9 +69,9 @@ nextTyproa/
 
 普通用户可以直接在 GitHub Releases 页面下载 Windows 版安装包：
 
-* `NextTyproa-<版本>-win-x64.exe`：Windows 安装包，推荐日常使用。版本号来自 `package.json`，由 electron-builder 自动写进文件名——不要手工改名，那样 `latest.yml` 和 `.blockmap` 会和产物对不上。
+* `NextTypora-<版本>-win-x64.exe`：Windows 安装包，推荐日常使用。版本号来自 `package.json`，由 electron-builder 自动写进文件名——不要手工改名，那样 `latest.yml` 和 `.blockmap` 会和产物对不上。
 
-* `NextTyproa-<版本>-win-x64.zip`：免安装压缩包，解压后运行 `NextTyproa.exe`（由 `npm run dist` 产出）。
+* `NextTypora-<版本>-win-x64.zip`：免安装压缩包，解压后运行 `NextTypora.exe`（由 `npm run dist` 产出）。
 
 安装包内置前端资源、后端服务和运行所需的 JRE，不需要额外安装 Node.js、Java 或 Maven。首次运行未签名安装包时，Windows SmartScreen 可能会显示安全确认提示。
 
@@ -174,7 +174,7 @@ npm run dist:setup
 1. 安装并打开 [PicGo](https://picgo.app/)。
 2. 在 PicGo 中配置图床。
 3. 开启 PicGo Server，默认地址为 `http://127.0.0.1:36677`。
-4. 如果配置了 Server 密钥，在 NextTyproa 偏好设置中填写相同密钥。
+4. 如果配置了 Server 密钥，在 NextTypora 偏好设置中填写相同密钥。
 5. 在偏好设置中选择 PicGo 图床模式并测试连接。
 6. 在编辑器中粘贴或插入图片后，Markdown 会写入图床 URL。
 

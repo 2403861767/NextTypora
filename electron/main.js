@@ -15,6 +15,13 @@ const {
   resolveTrashTarget,
 } = require('./ipcValidation');
 
+// 显示名是 NextTypora（正确拼写），但应用身份必须留在历史上的错拼 NextTyproa：
+// userData 路径取自 app.getName()，默认就是 package.json 的 productName，
+// 一旦跟着改名，已安装用户的 settings.json 和 themes/ 会被留在旧目录里，
+// 主题、自定义快捷键、最近工作区、打开的标签页全部静默丢失。
+// 必须在任何 app.getPath('userData') 之前调用。见 docs/adr/0002-display-name-vs-app-identity.md
+app.setName('NextTyproa');
+
 const isDev = !app.isPackaged;
 let mainWindow = null;
 let splashWindow = null;
@@ -239,7 +246,7 @@ function closeSplashWindow() {
 function failStartup(message) {
   if (quitting) return;
   closeSplashWindow();
-  dialog.showErrorBox('NextTyproa 启动失败', message);
+  dialog.showErrorBox('NextTypora 启动失败', message);
   finishQuit();
 }
 
