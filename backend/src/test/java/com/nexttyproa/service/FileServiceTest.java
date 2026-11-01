@@ -1,6 +1,8 @@
 package com.nexttyproa.service;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
@@ -10,14 +12,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class FileServiceTest {
 
@@ -70,16 +74,71 @@ class FileServiceTest {
         }
     }
 
+    /**
+     * 建立一个指向 target 的重解析点，返回实际成功的类型，全部失败时返回 null。
+     * Windows 下建符号链接需要管理员权限或开发者模式，而目录联接（junction）无需提权——
+     * 所以这里必须两种都试，否则在普通 Windows 开发机上这条规则根本验不到。
+     */
+    private static String createReparsePoint(Path link, Path target) {
+        try {
+            Files.createSymbolicLink(link, target);
+            return "symlink";
+        } catch (UnsupportedOperationException | IOException | SecurityException e) {
+            // 退回目录联接
+        }
+        if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows")) {
+            return null;
+        }
+        return createDirectoryJunction(link, target) ? "junction" : null;
+    }
+
+    private static boolean createDirectoryJunction(Path link, Path target) {
+        try {
+            Process process = new ProcessBuilder("cmd", "/c", "mklink", "/J", link.toString(), target.toString())
+                    .redirectErrorStream(true)
+                    .start();
+            if (!process.waitFor(30, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0 && Files.exists(link);
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
     @Test
-    void resolveSafeRejectsSymlinkPathSegment(@TempDir Path parent) throws Exception {
+    void resolveSafeRejectsReparsePointPathSegment(@TempDir Path parent) throws Exception {
         Path vaultRoot = Files.createDirectory(parent.resolve("vault"));
         Path outside = Files.createDirectory(parent.resolve("outside"));
+        Files.writeString(outside.resolve("secret.md"), "SECRET");
         Path link = vaultRoot.resolve("link");
-        try {
-            Files.createSymbolicLink(link, outside);
-        } catch (UnsupportedOperationException | java.io.IOException | SecurityException e) {
-            assumeTrue(false);
-        }
+
+        String kind = createReparsePoint(link, outside);
+        // 这是 CLAUDE.md 的头号安全规则。建不出链接时必须失败而不是静默跳过：
+        // 一条可以静默消失的安全测试比没有测试更坏，因为它让人以为有覆盖。
+        assertNotNull(kind, "无法建立任何重解析点（符号链接与目录联接都失败），该安全规则未被验证");
+
+        assertThrows(SecurityException.class,
+                () -> fileService.resolveSafe(vaultRoot, "link/secret.md"), kind);
+    }
+
+    /**
+     * 单列一条：当符号链接恰好可建时（开发者模式/提权），上面那条会走 symlink 分支而永远验不到
+     * junction，而 junction 才是无需提权、因此更容易被塞进工作区的那一种。
+     */
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void resolveSafeRejectsDirectoryJunctionPathSegment(@TempDir Path parent) throws Exception {
+        Path vaultRoot = Files.createDirectory(parent.resolve("vault"));
+        Path outside = Files.createDirectory(parent.resolve("outside"));
+        Files.writeString(outside.resolve("secret.md"), "SECRET");
+        Path link = vaultRoot.resolve("link");
+
+        assertTrue(createDirectoryJunction(link, outside), "mklink /J 创建目录联接失败");
 
         assertThrows(SecurityException.class, () -> fileService.resolveSafe(vaultRoot, "link/secret.md"));
     }

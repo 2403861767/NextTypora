@@ -15,9 +15,11 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -122,11 +124,28 @@ public class FileService {
                 throw new SecurityException("Path traversal detected: " + relativePath);
             }
             current = current.resolve(segment);
-            if (Files.isSymbolicLink(current)) {
-                throw new SecurityException("Symbolic links are not allowed in workspace paths: " + relativePath);
+            if (Files.isSymbolicLink(current) || isReparsePoint(current)) {
+                throw new SecurityException("Reparse points are not allowed in workspace paths: " + relativePath);
             }
         }
         return resolved;
+    }
+
+    /**
+     * Windows 目录联接（junction）是重解析点但不是符号链接，{@link Files#isSymbolicLink} 对它返回
+     * false，所以单靠那一条检查会让 junction 把路径指向工作区外面。而 junction 无需管理员权限即可
+     * 创建，符号链接却需要——容易创建的那一种反而是漏掉的那一种，因此必须一并挡掉。
+     *
+     * <p>不用 {@code toRealPath().startsWith(root)} 做这件事：它要求路径已存在，会让"新建文件"
+     * 的通路抛 {@link java.nio.file.NoSuchFileException}。
+     */
+    private static boolean isReparsePoint(Path path) {
+        try {
+            return Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).isOther();
+        } catch (IOException e) {
+            // 路径尚不存在（新建文件）或属性读不到：不在这里误判为逃逸，交给后续流程处理
+            return false;
+        }
     }
 
     public String readFile(Path file) throws IOException {
