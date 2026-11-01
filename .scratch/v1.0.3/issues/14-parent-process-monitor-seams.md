@@ -26,3 +26,5 @@ Spec section: 11（见 ../spec.md）
 三条分支都有测试；其中第 1 条最关键——若「开发模式跳过」分支回归，后端会在开发时自己退出，而现在零覆盖。
 
 ## Comments
+
+- 前置阻塞已解除：新建 `ParentProcessMonitorTest.java` 原本会被 `.gitignore` 的 `test/` 静默忽略，该规则已锚定为 `/test/`（见 V103-16）。
