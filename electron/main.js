@@ -438,79 +438,15 @@ async function picGoRequest(serverUrl, secret, pathname, options = {}) {
   return data;
 }
 
-function createMenu() {
-  const template = [
-    {
-      label: '文件',
-      submenu: [
-        {
-          label: '打开…',
-          accelerator: 'CmdOrCtrl+O',
-          click: () => mainWindow?.webContents.send('menu:open-file'),
-        },
-        {
-          label: '打开文件夹…',
-          accelerator: 'CmdOrCtrl+Shift+O',
-          click: () => mainWindow?.webContents.send('menu:open-folder'),
-        },
-        {
-          label: '新建文件',
-          accelerator: 'CmdOrCtrl+N',
-          click: () => mainWindow?.webContents.send('menu:create-note'),
-        },
-        {
-          label: '保存',
-          accelerator: 'CmdOrCtrl+S',
-          click: () => mainWindow?.webContents.send('menu:save'),
-        },
-        { type: 'separator' },
-        {
-          label: '导出为 HTML',
-          accelerator: 'CmdOrCtrl+Shift+E',
-          click: () => mainWindow?.webContents.send('menu:export-html'),
-        },
-        {
-          label: '导出为 PDF',
-          accelerator: 'CmdOrCtrl+Alt+P',
-          click: () => mainWindow?.webContents.send('menu:export-pdf'),
-        },
-        { type: 'separator' },
-        { role: 'quit', label: '退出' },
-      ],
-    },
-    {
-      label: '偏好设置',
-      submenu: [
-        {
-          label: '打开偏好设置…',
-          accelerator: 'CmdOrCtrl+,',
-          click: () => mainWindow?.webContents.send('menu:open-settings'),
-        },
-      ],
-    },
-    {
-      label: '视图',
-      submenu: [
-        {
-          label: '切换源码模式',
-          accelerator: 'CmdOrCtrl+/',
-          click: () => mainWindow?.webContents.send('menu:toggle-source'),
-        },
-        {
-          label: '显示/隐藏侧边栏',
-          accelerator: 'CmdOrCtrl+Shift+L',
-          click: () => mainWindow?.webContents.send('menu:toggle-sidebar'),
-        },
-        { type: 'separator' },
-        { role: 'reload', label: '重新加载' },
-        { role: 'toggleDevTools', label: '开发者工具' },
-      ],
-    },
-  ];
-  if (process.platform === 'darwin') {
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-    return;
-  }
+/**
+ * Windows 下不装应用菜单：无边框自定义标题栏是刻意的外观选择。
+ *
+ * 这里原本还有一份只在 macOS 生效的菜单模板，里面 9 个加速键与
+ * frontend/src/utils/shortcuts.ts 重复定义了同一批快捷键——而发布目标只有 Windows
+ * （见 .scratch/v1.0.3/issues/10-remove-macos-menu-template.md），所以那份模板既不生效、
+ * 又是"改了一边忘了另一边"的温床。快捷键现在只有渲染进程一个来源。
+ */
+function removeApplicationMenu() {
   Menu.setApplicationMenu(null);
 }
 
@@ -883,7 +819,6 @@ ipcMain.handle('export:pdf', async (_event, payload) => {
 
   try {
     await exportWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-    await waitForMermaidRender(exportWindow);
     const pdf = await exportWindow.webContents.printToPDF({
       printBackground: true,
       preferCSSPageSize: true,
@@ -897,30 +832,10 @@ ipcMain.handle('export:pdf', async (_event, payload) => {
   }
 });
 
-async function waitForMermaidRender(exportWindow) {
-  if (!exportWindow || exportWindow.isDestroyed()) return;
-  await exportWindow.webContents.executeJavaScript(`
-    new Promise((resolve) => {
-      if (!document.querySelector('.mermaid')) {
-        resolve(true);
-        return;
-      }
-
-      const startedAt = Date.now();
-      const timer = setInterval(() => {
-        if (window.__NEXTTYPROA_MERMAID_DONE__ || Date.now() - startedAt > 5000) {
-          clearInterval(timer);
-          resolve(Boolean(window.__NEXTTYPROA_MERMAID_DONE__));
-        }
-      }, 100);
-    })
-  `, true);
-}
-
 if (gotLock) {
   app.whenReady().then(async () => {
     createSplashWindow();
-    createMenu();
+    removeApplicationMenu();
     try {
       await startBackend();
       const healthy = await waitForHealth(backendConfig.port);

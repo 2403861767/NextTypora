@@ -29,7 +29,7 @@ NextTyproa 是一款受 Typora 启发的本地优先 Markdown 桌面笔记应用
 * **编码保护**：支持 UTF-8、UTF-8 BOM、GBK、Big5、Shift-JIS、UTF-16 检测，保存时尽量沿用原编码，写入是「临时文件 + 原子重命名」。
 * **数据防线**：笔记在应用之外被改动时，保留你这一版并把对方那一版存成可见的 `*.conflict-<时间戳>.md`；删除走系统回收站。保存时不另外生成备份文件（1.0.3 起，见 [ADR-0001](docs/adr/0001-no-save-time-backups.md)）。
 
-* **桌面集成**：Electron 桌面壳支持 Markdown 文件关联、窗口菜单、偏好设置和本地后端代理。
+* **桌面集成**：Electron 桌面壳支持 Markdown 文件关联、无边框自定义标题栏、偏好设置和本地后端代理。全部快捷键在偏好设置里可改（Windows 上没有系统菜单栏，这是刻意的外观选择）。
 
 ## 技术栈
 
@@ -71,7 +71,7 @@ nextTyproa/
 
 * `NextTyproa-<版本>-win-x64.exe`：Windows 安装包，推荐日常使用。版本号来自 `package.json`，由 electron-builder 自动写进文件名——不要手工改名，那样 `latest.yml` 和 `.blockmap` 会和产物对不上。
 
-* `NextTyproa-win-x64.zip`：免安装压缩包，解压后运行 `NextTyproa.exe`。
+* `NextTyproa-<版本>-win-x64.zip`：免安装压缩包，解压后运行 `NextTyproa.exe`（由 `npm run dist` 产出）。
 
 安装包内置前端资源、后端服务和运行所需的 JRE，不需要额外安装 Node.js、Java 或 Maven。首次运行未签名安装包时，Windows SmartScreen 可能会显示安全确认提示。
 
@@ -193,7 +193,7 @@ npm run dist:setup
 | 当前文档替换         | `Ctrl+H`               | `Cmd+H`               |
 | 切换源码模式         | `Ctrl+/`               | `Cmd+/`               |
 | 专注模式           | `Ctrl+Alt+F`           | `Cmd+Alt+F`           |
-| 打字机模式          | `Ctrl+Alt+T`           | `Cmd+Alt+T`           |
+| 打字机模式          | `Ctrl+Shift+T`         | `Cmd+Shift+T`         |
 | 沉浸写作           | `F11` / `Ctrl+Shift+D` | `F11` / `Cmd+Shift+D` |
 | 导出 HTML        | `Ctrl+Shift+E`         | `Cmd+Shift+E`         |
 | 导出 PDF         | `Ctrl+Alt+P`           | `Cmd+Alt+P`           |

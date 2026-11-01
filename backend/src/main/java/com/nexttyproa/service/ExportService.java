@@ -208,9 +208,6 @@ public class ExportService {
                 <main>
                 %s
                 </main>
-                <script>
-                  window.__NEXTTYPROA_MERMAID_DONE__ = true;
-                </script>
                 </body>
                 </html>
                 """.formatted(

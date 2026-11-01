@@ -93,8 +93,11 @@ class ExportServiceTest {
         assertTrue(exported.getHtml().contains("System.out.println(&quot;hi&quot;);"));
         assertTrue(exported.getHtml().contains("<pre class=\"mermaid\">"));
         assertTrue(exported.getHtml().contains("graph TD"));
-        assertTrue(exported.getHtml().contains("window.__NEXTTYPROA_MERMAID_DONE__ = true"));
+        // Mermaid 在导出里是带样式的源码块，不渲染成图：本地优先，导出产物不得引用 CDN。
+        // 原先这里还断言一个恒为 true 的 __NEXTTYPROA_MERMAID_DONE__ 标志存在，那只是把
+        // Electron 侧一段"等它变 true"的死机械锁死；两边已在 V103-09 一并删除。
         assertFalse(exported.getHtml().contains("cdn.jsdelivr.net"));
+        assertFalse(exported.getHtml().contains("MERMAID_DONE"));
     }
 
     @Test
