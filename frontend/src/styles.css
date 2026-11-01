@@ -2660,6 +2660,18 @@ html[data-theme='dark'] .search-index-warning {
   width: 100%;
 }
 
+.settings-about-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-about-version {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
 .settings-backup-result {
   margin-top: 12px;
 }

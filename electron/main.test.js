@@ -39,6 +39,7 @@ function createFakeElectron() {
     setAppUserModelId: () => undefined,
     whenReady: () => Promise.resolve(),
     getPath: (name) => `fake-${name}`,
+    getVersion: () => '1.0.3',
     getAppPath: () => __dirname,
     // app.quit()：先发 before-quit（可取消），再依次关闭所有窗口；有窗口没关掉则退出中止
     quit() {
@@ -382,4 +383,12 @@ test('RW-P2-008: a recycle bin failure is reported to the renderer', async (t) =
   app.fake.state.trashError = new Error('Failed to move item to trash');
 
   await assert.rejects(async () => app.invoke('file:trashItem', '日记/图片笔记.md'), /Failed to move item to trash/);
+});
+
+// V103-07：应用里一直看不到版本号（没有关于对话框，app.getVersion 从未被调用过）。
+// 版本号的唯一来源是 package.json，经主进程 app.getVersion() 交给渲染进程。
+test('V103-07: app:getVersion hands the renderer the version from the main process', async (t) => {
+  const app = await bootApp(t);
+
+  assert.equal(await app.invoke('app:getVersion'), '1.0.3');
 });

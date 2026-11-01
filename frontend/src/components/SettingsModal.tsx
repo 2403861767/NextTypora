@@ -59,6 +59,7 @@ export function SettingsModal({ open, initial, onClose, onSaved }: SettingsModal
   const [backupScan, setBackupScan] = useState<LegacyBackupScan | null>(null);
   const [scanningBackups, setScanningBackups] = useState(false);
   const [cleaningBackups, setCleaningBackups] = useState(false);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const [loadingThemes, setLoadingThemes] = useState(false);
 
   // App 每次渲染都会传入新的 initial 对象：只在打开对话框时用它重置草稿，否则轮询引起的重新渲染会冲掉未保存的修改
@@ -87,6 +88,21 @@ export function SettingsModal({ open, initial, onClose, onSaved }: SettingsModal
       setTesting(false);
     }
   };
+
+  // 版本号来自主进程的 app.getVersion()，渲染进程不自己猜
+  useEffect(() => {
+    if (!open) return;
+    const getAppVersion = window.nextTyproa?.getAppVersion;
+    if (!getAppVersion) {
+      setAppVersion(null);
+      return;
+    }
+    let cancelled = false;
+    void getAppVersion()
+      .then((version) => { if (!cancelled) setAppVersion(version); })
+      .catch(() => { if (!cancelled) setAppVersion(null); });
+    return () => { cancelled = true; };
+  }, [open]);
 
   const handleScanBackups = async () => {
     setScanningBackups(true);
@@ -515,6 +531,17 @@ export function SettingsModal({ open, initial, onClose, onSaved }: SettingsModal
               </div>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <Text className="settings-section-title">关于</Text>
+        <Paragraph type="secondary" className="settings-hint">
+          反馈问题时请带上这里的版本号。
+        </Paragraph>
+        <div className="settings-about-row">
+          <span className="settings-radio-label">NextTypora</span>
+          <Text className="settings-about-version">{appVersion ?? '版本号不可用（请在桌面应用中查看）'}</Text>
         </div>
       </section>
     </ModalFrame>

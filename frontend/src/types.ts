@@ -240,6 +240,7 @@ declare global {
       onMenuOpenSettings?: (callback: () => void) => () => void;
       revealInExplorer?: (path: string) => Promise<void>;
       /** 把当前工作区内的文件或文件夹（相对路径）移到系统回收站 */
+      getAppVersion?: () => Promise<string>;
       trashItem?: (relativePath: string) => Promise<void>;
       listThemes?: () => Promise<ExternalTheme[]>;
       openThemeDirectory?: () => Promise<string>;

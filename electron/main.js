@@ -613,6 +613,10 @@ ipcMain.handle('backend:restart', () => {
   return backendRestart;
 });
 
+// 用户可见的版本号唯一来源是 package.json，打包后由 electron-builder 写进应用元数据。
+// 渲染进程不自己猜，也不从别处读，见 .scratch/v1.0.3/issues/06-version-single-source-and-check.md
+ipcMain.handle('app:getVersion', () => app.getVersion());
+
 ipcMain.handle('settings:get', () => loadSettings(app.getPath('userData')));
 
 ipcMain.handle('settings:setLastWorkspace', (_event, folderPath) => {

@@ -214,3 +214,49 @@ describe('SettingsModal 存储区块', () => {
     await waitFor(() => expect(vi.mocked(scanLegacyBackups)).toHaveBeenCalledTimes(1));
   });
 });
+
+// V103-07：1.0.3 之前应用里完全看不到版本号——没有关于对话框，app.getVersion() 从未被调用
+describe('SettingsModal 关于区块', () => {
+  beforeAll(() => {
+    if (!('ResizeObserver' in window)) {
+      vi.stubGlobal('ResizeObserver', class ResizeObserver {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      });
+    }
+  });
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    delete (window as { nextTyproa?: unknown }).nextTyproa;
+  });
+
+  const open = () => render(<SettingsModal open initial={settings()} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+  it('显示主进程报告的版本号', async () => {
+    const getAppVersion = vi.fn().mockResolvedValue('1.0.3');
+    (window as { nextTyproa?: unknown }).nextTyproa = { getAppVersion };
+    open();
+
+    expect(await within(dialog()).findByText('1.0.3')).toBeTruthy();
+    expect(getAppVersion).toHaveBeenCalled();
+  });
+
+  it('拿不到版本号时说明原因，而不是显示一个编出来的值', async () => {
+    open();
+
+    expect(await within(dialog()).findByText(/版本号不可用/)).toBeTruthy();
+  });
+
+  // 版本号只能来自主进程：渲染进程不该从别处猜一个出来
+  it('主进程报错时也不编版本号', async () => {
+    (window as { nextTyproa?: unknown }).nextTyproa = {
+      getAppVersion: vi.fn().mockRejectedValue(new Error('boom')),
+    };
+    open();
+
+    expect(await within(dialog()).findByText(/版本号不可用/)).toBeTruthy();
+  });
+});
