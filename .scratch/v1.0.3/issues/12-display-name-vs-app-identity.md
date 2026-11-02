@@ -65,3 +65,25 @@ app.setName('NextTyproa');
 ### 现场
 
 探针实验在 `%APPDATA%/NextTypora` 留下过一个只含 `Local State` 的空壳目录（我自己造的，22:41），已删除。真正的 `nexttyproa` 目录一个字节没动。
+
+### 补充：真实打包后才发现漏了 author（2026-11-01）
+
+打出 1.0.3 安装包后查 exe 属性，`ProductName` 已经是 `NextTypora`（V103-12 生效），但：
+
+```
+CompanyName    : nextTyproa
+LegalCopyright : Copyright © 2026 nextTyproa
+```
+
+两者都来自 `package.json` 的 `author`，我改显示层时漏掉了它。exe 属性是用户可见的，所以这仍属于本票范围。`author` 只是元数据，不碰 `appId` / `userData` / 顶层 `name`，与 ADR-0002 的身份约束无冲突。
+
+改为 `NextTypora` 后重新打包核对：
+
+```
+ProductName    : NextTypora
+CompanyName    : NextTypora
+FileVersion    : 1.0.3
+LegalCopyright : Copyright © 2026 NextTypora
+```
+
+教训：显示名散落在比预想更多的地方，只靠 grep 产品名找不全——有些是 electron-builder 从别的字段派生出来的，必须打出产物再查属性才看得见。
