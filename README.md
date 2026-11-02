@@ -51,6 +51,7 @@ nextTyproa/
   resources/    打包资源目录
   scripts/      构建、校验和打包脚本
   docs/         项目文档与设计参考
+  test/         打包版手工复测用的工作区夹具（见 test/README.md）
 ```
 
 ## 环境要求

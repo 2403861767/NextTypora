@@ -1,0 +1,6 @@
+# Markdown Syntax Coverage
+
+1.0.3 之前的版本每次保存都会把被覆盖的那一版复制到同目录的 .nexttyproa-backups/ 下，
+文件名是「原名 + Instant 时间戳 + .bak」，每个文件最多留 10 份。
+没有任何代码读过它们，所以 1.0.3 把这个机制整体移除了（见 docs/adr/0001-no-save-time-backups.md）。
+这份残留是故意留在夹具里的，用来验证偏好设置 →「存储」能把它扫出来。

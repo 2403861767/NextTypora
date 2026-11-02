@@ -20,8 +20,11 @@ style.md
 frontend/dist/
 backend/target/
 release/
-.nexttyproa-backups
-# 必须锚定在根目录：不带前导斜杠时它也会匹配 backend/src/test/，
-# 于是新建的后端测试文件会被静默忽略（git add 拒绝、git status 不显示）。
-# e2e 夹具就是这样在 799a03f 里丢掉的。见 .scratch/v1.0.3/issues/16。
-/test/
+.nexttyproa-backups/
+# 例外：打包版复测夹具里留着一份刻意保留的「老版本残留」，
+# 偏好设置 →「存储」的扫描得有东西可扫。它必须跟着仓库走。见 .scratch/v1.0.3/issues/17。
+!test/e2e-vault/**/.nexttyproa-backups/
+# test/ 以前整个被忽略，e2e 夹具就是这样在 799a03f 里丢掉的（见 .scratch/v1.0.3/issues/16、17）。
+# 现在不再忽略它：那些夹具是打包版复测的输入，必须跟着仓库走。
+# 注意不要把这条规则写成不带前导斜杠的 test/ ——那样它也会匹配 backend/src/test/，
+# 新增的后端测试文件会被静默忽略（git add 拒绝、git status 不显示）。
