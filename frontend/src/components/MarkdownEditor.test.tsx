@@ -2,6 +2,27 @@ import { render, waitFor } from '@testing-library/react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { MarkdownEditor } from './MarkdownEditor';
 
+/**
+ * V103-18：等“这次编辑已经被编辑器采集并上报”，而不是等“onChange 被调用过”。
+ *
+ * 带列表或脚注的文档在挂载时会被规范化一次，于是 markdownUpdated 会先带着与载入内容完全相同的
+ * 文本上报一次（块保留器让未改动的块按原文序列化，所以字节上一模一样）。只等 toHaveBeenCalled
+ * 会被这一次满足——机器被压满时它早于模拟输入发生，断言于是拿到不含刚输入字符的旧文本，表现为
+ * 同一组里随机某条用例失败。等“上报的内容不再等于载入内容”就与墙上时间无关了；不要改成加长固定
+ * 等待，那只是把概率压低，而且会拖慢整组用例。
+ */
+async function waitForCollectedEdit(loaded: string, latestReport: () => string | undefined) {
+  await waitFor(
+    () => {
+      const latest = latestReport();
+      expect(latest).toBeDefined();
+      expect(latest).not.toBe(loaded);
+    },
+    { timeout: 5000 },
+  );
+  return latestReport() as string;
+}
+
 describe('MarkdownEditor', () => {
   it('reports the loaded note through onReady and the very first edit through onChange', async () => {
     const onReady = vi.fn();
@@ -29,8 +50,8 @@ describe('MarkdownEditor', () => {
     expect(text?.nodeType).toBe(Node.TEXT_NODE);
     (text as Text).data += '，追加内容';
 
-    await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
-    expect(onChange.mock.calls.at(-1)?.[0]).toContain('第一段正文，追加内容');
+    const reported = await waitForCollectedEdit(onReady.mock.calls[0][0], () => onChange.mock.calls.at(-1)?.[0]);
+    expect(reported).toContain('第一段正文，追加内容');
     expect(onReady).toHaveBeenCalledTimes(1);
   });
 
@@ -64,7 +85,7 @@ describe('MarkdownEditor', () => {
     expect(pendingMarkdownRef?.current?.read()).toContain('第一段正文，追加内容');
 
     // 上报之后就没有“未上报”的内容了
-    await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
+    await waitForCollectedEdit(onReady.mock.calls[0][0], () => onChange.mock.calls.at(-1)?.[0]);
     expect(pendingMarkdownRef?.current?.read()).toBeUndefined();
 
     unmount();
@@ -123,8 +144,7 @@ describe('MarkdownEditor', () => {
       expect(text?.textContent).toBe('没有银弹。');
       (text as Text).data += '（摘录）';
 
-      await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
-      const saved: string = onChange.mock.calls.at(-1)?.[0];
+      const saved = await waitForCollectedEdit(onReady.mock.calls[0][0], () => onChange.mock.calls.at(-1)?.[0]);
       expect(saved.slice(0, FRONTMATTER.length)).toBe(FRONTMATTER);
       const body = saved.slice(FRONTMATTER.length);
       expect(body).toContain('# 人月神话');
@@ -243,8 +263,8 @@ describe('MarkdownEditor', () => {
 
       typeAtEndOf(container, 'Setext heading above', ' X');
 
-      await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
-      expect(onChange.mock.calls.at(-1)?.[0]).toBe(ASCII_NOTES.replace('underscores.', 'underscores. X'));
+      const saved = await waitForCollectedEdit(onReady.mock.calls[0][0], () => onChange.mock.calls.at(-1)?.[0]);
+      expect(saved).toBe(ASCII_NOTES.replace('underscores.', 'underscores. X'));
     });
 
     it('editing a tight task list keeps it tight with its "-" markers and leaves everything else untouched', async () => {
@@ -253,8 +273,8 @@ describe('MarkdownEditor', () => {
 
       typeAtEndOf(container, 'task open', ' Y');
 
-      await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
-      expect(onChange.mock.calls.at(-1)?.[0]).toBe(ASCII_NOTES.replace('- [ ] task open', '- [ ] task open Y'));
+      const saved = await waitForCollectedEdit(onReady.mock.calls[0][0], () => onChange.mock.calls.at(-1)?.[0]);
+      expect(saved).toBe(ASCII_NOTES.replace('- [ ] task open', '- [ ] task open Y'));
     });
 
     it('never merges an edited list into a neighbouring list', async () => {
@@ -264,8 +284,8 @@ describe('MarkdownEditor', () => {
 
       typeAtEndOf(container, 'b', ' X');
 
-      await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
-      expect(onChange.mock.calls.at(-1)?.[0]).toMatch(/^([-*+]) a\n\n(?!\1)[-*+] b X\n$/);
+      const saved = await waitForCollectedEdit(onReady.mock.calls[0][0], () => onChange.mock.calls.at(-1)?.[0]);
+      expect(saved).toMatch(/^([-*+]) a\n\n(?!\1)[-*+] b X\n$/);
     });
 
     // 打包版复测（test/p1-verify-evidence/REPORT.md）发现：被编辑的块本身仍会按 Milkdown 的规范格式整块重写
@@ -325,8 +345,7 @@ describe('MarkdownEditor', () => {
         await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1), { timeout: 5000 });
         expect(onReady.mock.calls[0][0]).toBe(value);
         typeAtEndOf(container, startsWith, typed, selector);
-        await waitFor(() => expect(onChange).toHaveBeenCalled(), { timeout: 5000 });
-        return onChange.mock.calls.at(-1)?.[0] as string;
+        return waitForCollectedEdit(value, () => onChange.mock.calls.at(-1)?.[0]);
       }
 
       it('editing one item of a "*" list with 4-space sub-items changes only that line', async () => {
