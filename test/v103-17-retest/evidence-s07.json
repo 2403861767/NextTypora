@@ -1,0 +1,67 @@
+{
+  "steps": [
+    {
+      "name": "screen",
+      "detail": {
+        "physical": "1920x1080"
+      }
+    },
+    {
+      "name": "app-window-placed",
+      "detail": {
+        "screenX": 768,
+        "screenY": 0,
+        "inner": [
+          900,
+          800
+        ],
+        "dpr": 1.25
+      }
+    },
+    {
+      "name": "before",
+      "detail": {
+        "assetsBefore": [],
+        "mdBefore": "# 新笔记\n\n你好\n\n"
+      }
+    },
+    {
+      "name": "explorer-item",
+      "detail": {
+        "hwnd": "919308",
+        "expPid": "5784",
+        "rect": "515,178,131,147",
+        "centre": [
+          580.5,
+          251.5
+        ]
+      }
+    },
+    {
+      "name": "drop-target",
+      "detail": {
+        "editorCss": {
+          "x": 479.00001525878906,
+          "y": 262.8000030517578
+        },
+        "target": {
+          "x": 1559,
+          "y": 329
+        }
+      }
+    },
+    {
+      "name": "after-drop",
+      "detail": {
+        "imagesInEditor": 1,
+        "assetsAfter": [
+          "1793978463998-490541.png"
+        ],
+        "assetsDirCreated": true,
+        "mdChanged": true,
+        "mdAfter": "# 新笔记\n\n![](打包版新笔记.assets/1793978463998-490541.png)\n\n你好\n\n",
+        "toasts": "[]"
+      }
+    }
+  ]
+}

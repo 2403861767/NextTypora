@@ -1,0 +1,81 @@
+{
+  "steps": [
+    {
+      "name": "gbk-before",
+      "detail": {
+        "bytes": 95,
+        "utf8Strict": "THROWS: The encoded data was not valid for encoding utf-8",
+        "gbk": "# GBK 编码测试表情?结束\n\n这是一段中文内容，用于测试文件编码的检测与保存。\n\n* 第一项\n\n* 第二项\n\n"
+      }
+    },
+    {
+      "name": "gbk-opened",
+      "detail": {
+        "shown": "GBK 编码测试表情?结束 这是一段中文内容，用于测试文件编码的检测与保存。 第一项 第二项 "
+      }
+    },
+    {
+      "name": "typed",
+      "detail": {
+        "pasted": "追加一个汉字",
+        "landedInEditor": false,
+        "dirtyMarker": true,
+        "editorNow": "GBK 编码测试表情?结束 这是一段中文内容，用于测试文件编码的检测与保存。 第一项 第二项 "
+      }
+    },
+    {
+      "name": "gbk-after",
+      "detail": {
+        "error": "file never changed on disk within 25 s"
+      }
+    },
+    {
+      "name": "context-menu",
+      "detail": {
+        "emojiExistsBefore": true,
+        "menuItems": [
+          "在资源管理器中显示",
+          "复制相对路径",
+          "复制绝对路径",
+          "刷新文件树",
+          "移动到",
+          "重命名",
+          "删除"
+        ]
+      }
+    },
+    {
+      "name": "rename-dialog",
+      "detail": {
+        "title": "重命名请输入新的名称取 消重命名"
+      }
+    },
+    {
+      "name": "rename-input",
+      "detail": {
+        "value": "😀表情文件名-已改名.md"
+      }
+    },
+    {
+      "name": "after-rename",
+      "detail": {
+        "oldGone": true,
+        "newExists": true,
+        "inTree": [
+          "😀表情文件名-已改名.md"
+        ]
+      }
+    },
+    {
+      "name": "after-rename-back",
+      "detail": {
+        "originalExists": true,
+        "renamedGone": true,
+        "inTree": [
+          "😀表情文件名.md"
+        ],
+        "fileCount": 21
+      }
+    }
+  ]
+}

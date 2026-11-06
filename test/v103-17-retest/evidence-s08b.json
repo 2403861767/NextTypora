@@ -1,0 +1,55 @@
+{
+  "steps": [
+    {
+      "name": "closed-stale-instance",
+      "detail": {
+        "pid": 18848,
+        "alive": "no"
+      }
+    },
+    {
+      "name": "before",
+      "detail": {
+        "pid": 16240,
+        "bytes": 55,
+        "text": "# 2026-09-23 周三\n\n昨天的日记，内容很短。\n"
+      }
+    },
+    {
+      "name": "typed-and-quit",
+      "detail": {
+        "note": "single osinput call: z then alt+f4 ~60ms later"
+      }
+    },
+    {
+      "name": "process-exit",
+      "detail": {
+        "exitedAfterMs": 536,
+        "exited": true
+      }
+    },
+    {
+      "name": "on-disk-after-quit",
+      "detail": {
+        "bytes": 56,
+        "text": "# 2026-09-23 周三\n\n昨天的日记，内容很短。z\n",
+        "changed": true,
+        "keptTheEdit": true
+      }
+    },
+    {
+      "name": "after-relaunch",
+      "detail": {
+        "restoredText": "2026-09-23 周三 昨天的日记，内容很短。z",
+        "docChip": "2026-09-23.md",
+        "hasEdit": true
+      }
+    },
+    {
+      "name": "input-language-restored",
+      "detail": {
+        "klid": "00000804"
+      }
+    }
+  ]
+}

@@ -1,0 +1,152 @@
+{
+  "steps": [
+    {
+      "name": "note-before",
+      "detail": {
+        "bytes": 13,
+        "text": "# 新笔记\n\n"
+      }
+    },
+    {
+      "name": "editor-focused",
+      "detail": {
+        "focused": true
+      }
+    },
+    {
+      "name": "after-pinyin",
+      "detail": {
+        "comp": [
+          {
+            "type": "compositionstart",
+            "data": ""
+          },
+          {
+            "type": "compositionupdate",
+            "data": "n"
+          },
+          {
+            "type": "compositionupdate",
+            "data": "ni"
+          },
+          {
+            "type": "compositionupdate",
+            "data": "ni'h"
+          },
+          {
+            "type": "compositionupdate",
+            "data": "ni'ha"
+          },
+          {
+            "type": "compositionupdate",
+            "data": "ni'hao"
+          }
+        ],
+        "pmTail": "新笔记\n\nni'hao"
+      }
+    },
+    {
+      "name": "after-commit",
+      "detail": {
+        "comp": [
+          {
+            "type": "compositionstart",
+            "data": ""
+          },
+          {
+            "type": "compositionupdate",
+            "data": "n"
+          },
+          {
+            "type": "compositionupdate",
+            "data": "ni"
+          },
+          {
+            "type": "compositionupdate",
+            "data": "ni'h"
+          },
+          {
+            "type": "compositionupdate",
+            "data": "ni'ha"
+          },
+          {
+            "type": "compositionupdate",
+            "data": "ni'hao"
+          },
+          {
+            "type": "compositionupdate",
+            "data": "你好"
+          },
+          {
+            "type": "compositionend",
+            "data": "你好"
+          }
+        ],
+        "keys": [
+          {
+            "code": "End",
+            "key": "End",
+            "isComposing": false
+          },
+          {
+            "code": "Enter",
+            "key": "Enter",
+            "isComposing": false
+          },
+          {
+            "code": "KeyN",
+            "key": "Process",
+            "isComposing": false
+          },
+          {
+            "code": "KeyI",
+            "key": "Process",
+            "isComposing": true
+          },
+          {
+            "code": "KeyH",
+            "key": "Process",
+            "isComposing": true
+          },
+          {
+            "code": "KeyA",
+            "key": "Process",
+            "isComposing": true
+          },
+          {
+            "code": "KeyO",
+            "key": "Process",
+            "isComposing": true
+          },
+          {
+            "code": "Space",
+            "key": "Process",
+            "isComposing": true
+          }
+        ],
+        "pmTail": "新笔记\n\n你好"
+      }
+    },
+    {
+      "name": "verdict",
+      "detail": {
+        "compositionEventsFired": true,
+        "compositionTypes": [
+          "compositionstart",
+          "compositionupdate",
+          "compositionend"
+        ],
+        "hasChineseInEditor": true,
+        "latinLeftover": false,
+        "pmTail": "新笔记\n\n你好"
+      }
+    },
+    {
+      "name": "note-after",
+      "detail": {
+        "bytes": 21,
+        "text": "# 新笔记\n\n你好\n\n"
+      }
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "steps": [
+    {
+      "name": "opened",
+      "detail": {
+        "katexNodesInEditor": 5
+      }
+    },
+    {
+      "name": "native-save-dialog",
+      "detail": {
+        "dialog": {
+          "hwnd": 2688576,
+          "title": "导出为 HTML",
+          "rect": "60,0,960,600"
+        },
+        "clicked": "clicked id=1 name='保存(S)' at 808,554",
+        "how": "set file-name via click+paste; box now reads 'D:\\temp\\claude\\67e6fa4703bb2a45\\d878c732-54fc-45be-815a-4804da746bff\\scratchpad\\retest\\export-math.html'"
+      }
+    },
+    {
+      "name": "export-toast",
+      "detail": {
+        "toast": "no toast: waitFor timed out: export toast (last=null)"
+      }
+    },
+    {
+      "name": "file-written",
+      "detail": {
+        "exists": true,
+        "bytes": 3498,
+        "path": "D:\\temp\\claude\\67e6fa4703bb2a45\\d878c732-54fc-45be-815a-4804da746bff\\scratchpad\\retest\\export-math.html"
+      }
+    },
+    {
+      "name": "export-content",
+      "detail": {
+        "mathElements": 4,
+        "hasKatexCss": true,
+        "referencesCdn": false,
+        "keptDollars": {
+          "echo $PATH": true,
+          "$HOME/bin": true,
+          "price $19": true,
+          "price $25": true,
+          "$foo": true,
+          "export PRICE=$100": true,
+          "$USER owes $PRICE": true,
+          "table code $y$": true
+        },
+        "leftoverFormulaDollars": {
+          "E = mc^2 as text": false,
+          "block integral as text": true
+        },
+        "head": "<!doctype html> <html lang=\"en\"><head> <meta charset=\"utf-8\"> <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"> <title>数学公式</title> <"
+      }
+    }
+  ]
+}

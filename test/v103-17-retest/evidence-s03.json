@@ -1,0 +1,67 @@
+{
+  "steps": [
+    {
+      "name": "index-status",
+      "detail": {
+        "indexing": false,
+        "indexedFiles": 18,
+        "totalFiles": 18,
+        "failedFiles": 0,
+        "skippedFiles": 0,
+        "lastIndexedAt": "2026-11-06T14:50:23.327538100Z"
+      }
+    },
+    {
+      "name": "settings-open",
+      "detail": {
+        "sections": [
+          "主题与外观",
+          "编辑器",
+          "存储",
+          "图片上传",
+          "快捷键",
+          "关于"
+        ],
+        "aboutVersion": "1.0.3"
+      }
+    },
+    {
+      "name": "recycle-bin-before",
+      "detail": {
+        "matches": 2
+      }
+    },
+    {
+      "name": "storage-scan",
+      "detail": {
+        "text": "找到 2 个备份目录，共 808 B.nexttyproa-backups（2 个文件，583 B）日记/.nexttyproa-backups（2 个文件，225 B）"
+      }
+    },
+    {
+      "name": "backup-dirs-on-disk-before",
+      "detail": {
+        "root": true,
+        "diary": true
+      }
+    },
+    {
+      "name": "storage-clean-result",
+      "detail": {
+        "text": "当前工作区没有残留的备份目录"
+      }
+    },
+    {
+      "name": "backup-dirs-after",
+      "detail": {
+        "root": false,
+        "diary": false,
+        "recycleBinMatches": [
+          ".nexttyproa-backups | D:\\temp\\claude\\d--project-NextTypora\\e465532b-7ecd-4d76-8ca7-824d630d5462\\scratchpad\\vault-v103-04\\日记\\深层 | ‎2026/‎11/‎1 ‏‎21:35\r",
+          ".nexttyproa-backups | D:\\temp\\claude\\d--project-NextTypora\\e465532b-7ecd-4d76-8ca7-824d630d5462\\scratchpad\\vault-v103-04\\项目2026 | ‎2026/‎11/‎1 ‏‎21:35\r",
+          ".nexttyproa-backups | D:\\temp\\claude\\67e6fa4703bb2a45\\d878c732-54fc-45be-815a-4804da746bff\\scratchpad\\retest\\vault\\日记 | ‎2026/‎11/‎6 ‏‎22:50\r",
+          ".nexttyproa-backups | D:\\temp\\claude\\67e6fa4703bb2a45\\d878c732-54fc-45be-815a-4804da746bff\\scratchpad\\retest\\vault | ‎2026/‎11/‎6 ‏‎22:50"
+        ]
+      }
+    }
+  ]
+}
