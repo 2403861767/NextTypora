@@ -236,3 +236,21 @@ NextTypora 打开」。后者在任何已装过 Markdown 编辑器的机器上�
 因为被 `.gitignore` 盖住而随 `799a03f` 一起消失的。
 
 Status 从 `needs-info` 改为 `resolved`。
+
+## 更正（2026-11-07）：`.md` 默认值那条写得不准
+
+上面写安装程序「把 `HKCU\Software\Classes\.md` 的默认值覆盖成了 `Markdown Document`」并标注
+「未还原」，这话只对了一半。electron-builder 的 `FileAssociation.nsh` 在覆盖之前会把原值存进
+`<ProgId>_backup`（实测 `Markdown Document_backup` = `WorkBuddy.md`），卸载时
+`unregisterFileAssociations` 再写回去——卸载后实测 `.md` 默认值确实恢复成了 `WorkBuddy.md`。
+所以这个覆盖是**有记录、可逆**的，不是悄悄改掉。
+
+真正的残留是它**不删自己写的那条 `_backup` 值**，每卸载一次就留一条。这一点连同另外三处打包问题
+在 V103-19 里修掉了（新增 `customUnInstall` 清理，并把 ProgId 改成应用专属的 `NextTypora.md`）。
+1.0.3 那次安装留下的旧残留值（`Markdown Document_backup`）已手工删除，机器上这两个扩展名的
+注册表值回到了装之前的样子。
+
+顺带确认一件更重要的事：卸载程序**不会**删掉 `%APPDATA%\nexttyproa`。
+`uninstaller.nsh` 里那段 `RMDir /r "$APPDATA\..."` 需要命令行传 `--delete-app-data`，或者构建时
+设了 `deleteAppDataOnUninstall`——本项目两者都没有，实测卸载后设置目录与 `settings.json` 的
+SHA-256 都原封不动。

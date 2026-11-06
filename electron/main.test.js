@@ -410,3 +410,24 @@ test('V103-12: the display name in package.json is the correct spelling', () => 
   // appId 不能跟着改：Windows 会当成另一个软件，旧版不被覆盖，用户机器上留下两个安装
   assert.equal(pkg.build.appId, 'com.nexttyproa.app');
 });
+
+test('V103-19: the file association ProgId is app-specific and installer.nsh agrees with it', () => {
+  const root = path.join(__dirname, '..');
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const association = pkg.build.fileAssociations.find((item) => item.ext.includes('md'));
+
+  // 1.0.3 的安装版注册的是通用名 `Markdown Document`：任何同样命名的编辑器都会和它撞上，
+  // 而 ProgId 是 HKCU\Software\Classes 下的全局键名，撞上就是互相覆盖。
+  assert.ok(
+    association.name.includes('NextTypora'),
+    `ProgId ${association.name} must be app-specific`,
+  );
+
+  // installer.nsh 的 customUnInstall 按名字删 "<ProgId>_backup" 残留值，所以它内联了 ProgId。
+  // 这两处一旦不一致，卸载后会在 .md / .markdown 下各留一条我们自己的垃圾值。
+  const nsh = fs.readFileSync(path.join(root, 'build', 'installer.nsh'), 'utf8');
+  assert.ok(
+    nsh.includes(`${association.name}_backup`),
+    `build/installer.nsh must clean up ${association.name}_backup`,
+  );
+});

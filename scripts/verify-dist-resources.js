@@ -80,6 +80,39 @@ if (!hasMarkdownAssociation) {
   ok = false;
 }
 
+// ProgId 必须是应用专属的。`Markdown Document` 这种通用名会和任何同样命名的编辑器撞在一起，
+// 1.0.3 的安装版就是这么注册的。
+const markdownAssociation = associations.find((item) => {
+  const extensions = Array.isArray(item.ext) ? item.ext : [item.ext];
+  return extensions.includes('md');
+});
+const progId = markdownAssociation && markdownAssociation.name;
+if (progId && !progId.includes('NextTypora')) {
+  console.error(
+    `File association ProgId "${progId}" is not app-specific; use something like NextTypora.md.`,
+  );
+  ok = false;
+}
+
+// installer.nsh 的 customUnInstall 要按名字删掉 "<ProgId>_backup" 残留值，所以它内联了
+// ProgId。两处必须一致——否则卸载后会在 .md / .markdown 下留下我们自己的垃圾值。
+if (progId) {
+  const installerNsh = path.join(projectRoot, 'build', 'installer.nsh');
+  if (!fs.existsSync(installerNsh)) {
+    console.error(`Missing ${installerNsh}, referenced by build.nsis.include.`);
+    ok = false;
+  } else {
+    const nsh = fs.readFileSync(installerNsh, 'utf8');
+    if (!nsh.includes(`${progId}_backup`)) {
+      console.error(
+        `build/installer.nsh does not clean up "${progId}_backup"; `
+        + `the ProgId in package.json and installer.nsh have drifted apart.`,
+      );
+      ok = false;
+    }
+  }
+}
+
 const jreBin = path.join(projectRoot, 'resources', 'jre', 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
 if (!fs.existsSync(jreBin)) {
   console.error(`Missing bundled Java runtime: ${jreBin}`);

@@ -21,9 +21,10 @@
     "build:backend": "cd backend && mvn -DskipTests package && node ../scripts/copy-backend-jar.js",
     "build": "npm run build:backend && npm run build:frontend",
     "dist:verify": "npm test && npm run build && npm run prepare:resources && node scripts/verify-dist-resources.js",
+    "verify:release": "node scripts/verify-release-artifact.js",
     "prepare:resources": "node scripts/copy-backend-jar.js && node scripts/prepare-jre.js && npm run test:packaged",
     "dist": "npm run build && npm run prepare:resources && npx electron-builder --win dir && powershell -ExecutionPolicy Bypass -File scripts/package-zip.ps1",
-    "dist:setup": "npm run build && npm run prepare:resources && npx electron-builder --win nsis",
+    "dist:setup": "npm run build && npm run prepare:resources && npx electron-builder --win nsis && npm run verify:release",
     "dist:dir": "npm run build && npm run prepare:resources && npx electron-builder --win dir",
     "dist:portable": "npm run build && npm run prepare:resources && npx electron-builder --win portable"
   },
@@ -87,7 +88,7 @@
           "md",
           "markdown"
         ],
-        "name": "Markdown Document",
+        "name": "NextTypora.md",
         "description": "Markdown document",
         "role": "Editor"
       }
