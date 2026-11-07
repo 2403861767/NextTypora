@@ -816,7 +816,8 @@ describe('App (integration with mocked backend)', () => {
   describe('RW-P1-008: pasting a screenshot into the WYSIWYG editor', () => {
     const NOTE = '会议纪要.md';
     const NOTE_CONTENT = '# 会议纪要\n\n参会人：张三、李四\n';
-    const PLACEHOLDER = 'Upload in progress...';
+    // 上传插件的占位文字；V104-03 起是中文（原为 "Upload in progress..."）
+    const PLACEHOLDER = '正在上传图片…';
     let fetchSpy: MockInstance<typeof fetch> | undefined;
 
     afterEach(() => {
@@ -872,7 +873,7 @@ describe('App (integration with mocked backend)', () => {
       return respond;
     }
 
-    it('a failed upload removes the "Upload in progress..." placeholder and tells the user why', async () => {
+    it('a failed upload removes the upload placeholder and tells the user why', async () => {
       const respond = await pasteAndWaitForUpload();
 
       respond(jsonResponse(413, { error: 'The field file exceeds its maximum permitted size of 104857600 bytes.' }));
@@ -1538,6 +1539,76 @@ describe('App (integration with mocked backend)', () => {
 
       fireEvent.click(toggle);
       await waitFor(() => expect(label(document.querySelector('.typora-editor .preview-toggle-button')!)).toBe('编辑'));
+    }, 20000);
+  });
+
+  // V104-03：Crepe 其余用户看得到的英文。上传占位改的是 RW-P1-008 用例里的 PLACEHOLDER
+  describe('V104-03: remaining Crepe labels', () => {
+    async function element<T extends Element>(selector: string): Promise<T> {
+      return waitFor(() => {
+        const found = document.querySelector<T>(selector);
+        expect(found).not.toBeNull();
+        return found!;
+      }, { timeout: 5000 });
+    }
+
+    const label = (found: Element) => found.textContent?.trim();
+    const labels = (selector: string) => Array.from(document.querySelectorAll(selector)).map(label);
+
+    // 斜杠菜单在编辑器初始化时就挂到了页面上（隐藏着），筛选词为空时渲染全部分组，所以不用在 jsdom 里输入 "/"。
+    // Crepe 只拿菜单项的显示名做筛选：带上原英文名，/code、/table 这些老关键词才继续有效
+    it('names the slash menu groups in Chinese and keeps the English name after each item', async () => {
+      await openApp({ 'a.md': '# 笔记\n\n正文\n' }, ['a.md']);
+      const menu = '.typora-editor .milkdown-slash-menu';
+      await element(`${menu} .menu-group`);
+
+      expect(labels(`${menu} .tab-group li`)).toEqual(['文本', '列表', '高级']);
+      expect(labels(`${menu} .menu-group h6`)).toEqual(['文本', '列表', '高级']);
+      expect(labels(`${menu} .menu-group li > span:not(.milkdown-icon)`)).toEqual([
+        '正文 Text',
+        '一级标题 Heading 1', '二级标题 Heading 2', '三级标题 Heading 3',
+        '四级标题 Heading 4', '五级标题 Heading 5', '六级标题 Heading 6',
+        '引用 Quote', '分割线 Divider',
+        '无序列表 Bullet List', '有序列表 Ordered List', '任务清单 Task List',
+        '图片 Image', '代码块 Code', '表格 Table', '数学公式 Math',
+      ]);
+    }, 20000);
+
+    // 链接编辑浮层同样是初始化时就挂载、隐藏着的
+    it('shows the link input placeholder in Chinese', async () => {
+      await openApp({ 'a.md': '# 笔记\n\n正文\n' }, ['a.md']);
+
+      const input = await element<HTMLInputElement>('.typora-editor .milkdown-link-edit .input-area');
+      expect(input.placeholder).toBe('粘贴链接…');
+    }, 20000);
+
+    it('labels an empty block image in Chinese, and its confirm button once a link is typed', async () => {
+      await openApp({ 'a.md': '# 笔记\n\n正文\n\n![]()\n' }, ['a.md']);
+      const edit = '.typora-editor .milkdown-image-block .image-edit';
+
+      expect(label(await element(`${edit} .uploader`))).toBe('上传图片');
+      expect(label(await element(`${edit} .placeholder .text`))).toBe('或粘贴链接');
+
+      fireEvent.input(await element(`${edit} .link-input-area`), { target: { value: 'https://example.com/a.png' } });
+      expect(label(await element(`${edit} .confirm`))).toBe('确定');
+    }, 20000);
+
+    // 说明输入框要点了图片右上角的说明图标才出现（没有说明时）
+    it('shows the image caption placeholder in Chinese', async () => {
+      await openApp({ 'a.md': '# 笔记\n\n正文\n\n![](https://example.com/a.png)\n' }, ['a.md']);
+
+      fireEvent.pointerDown(await element('.typora-editor .milkdown-image-block .operation-item'));
+      const caption = await element<HTMLInputElement>('.typora-editor .milkdown-image-block .caption-input');
+      expect(caption.placeholder).toBe('输入图片说明');
+    }, 20000);
+
+    it('labels an empty inline image in Chinese', async () => {
+      await openApp({ 'a.md': '# 笔记\n\n正文 ![]() 结尾\n' }, ['a.md']);
+      // 行内图片的输入框根元素只有 empty-image-inline 这个类（Vue 用 className 盖掉了 image-edit）
+      const edit = '.typora-editor .milkdown-image-inline .empty-image-inline';
+
+      expect(label(await element(`${edit} .uploader`))).toBe('上传');
+      expect(label(await element(`${edit} .placeholder .text`))).toBe('或粘贴链接');
     }, 20000);
   });
 });

@@ -3,6 +3,7 @@ import { Crepe } from '@milkdown/crepe';
 import { editorViewCtx } from '@milkdown/kit/core';
 import type { Ctx } from '@milkdown/kit/ctx';
 import type { Node as ProseNode } from '@milkdown/kit/prose/model';
+import { Decoration } from '@milkdown/kit/prose/view';
 import { uploadConfig } from '@milkdown/kit/plugin/upload';
 import { getMarkdown } from '@milkdown/kit/utils';
 import { Milkdown, MilkdownProvider, useEditor, useInstance } from '@milkdown/react';
@@ -170,11 +171,50 @@ function EditorInner({
             text: '输入 / 唤起命令，或直接开始写作…',
             mode: 'block',
           },
+          // 斜杠菜单（V104-03）。Crepe 只拿菜单项的显示名做筛选，所以菜单项在中文后面保留原英文名：
+          // 新名字包含整个旧名字，/code、/table 这些老关键词照样能筛到，/代码 也能。分组名不参与筛选，只写中文
+          [Crepe.Feature.BlockEdit]: {
+            textGroup: {
+              label: '文本',
+              text: { label: '正文 Text' },
+              h1: { label: '一级标题 Heading 1' },
+              h2: { label: '二级标题 Heading 2' },
+              h3: { label: '三级标题 Heading 3' },
+              h4: { label: '四级标题 Heading 4' },
+              h5: { label: '五级标题 Heading 5' },
+              h6: { label: '六级标题 Heading 6' },
+              quote: { label: '引用 Quote' },
+              divider: { label: '分割线 Divider' },
+            },
+            listGroup: {
+              label: '列表',
+              bulletList: { label: '无序列表 Bullet List' },
+              orderedList: { label: '有序列表 Ordered List' },
+              taskList: { label: '任务清单 Task List' },
+            },
+            advancedGroup: {
+              label: '高级',
+              image: { label: '图片 Image' },
+              codeBlock: { label: '代码块 Code' },
+              table: { label: '表格 Table' },
+              math: { label: '数学公式 Math' },
+            },
+          },
           [Crepe.Feature.ImageBlock]: {
             onUpload: uploadImage,
             inlineOnUpload: uploadImage,
             blockOnUpload: uploadImage,
             proxyDomURL: resolveImage,
+            // 图片块文案（V104-03）。行内图片的确定按钮、块级图片的说明按钮是图标，不改
+            blockUploadButton: '上传图片',
+            blockUploadPlaceholderText: '或粘贴链接',
+            blockConfirmButton: '确定',
+            blockCaptionPlaceholderText: '输入图片说明',
+            inlineUploadButton: '上传',
+            inlineUploadPlaceholderText: '或粘贴链接',
+          },
+          [Crepe.Feature.LinkTooltip]: {
+            inputPlaceholder: '粘贴链接…',
           },
           [Crepe.Feature.CodeMirror]: {
             previewLabel: '预览',
@@ -200,11 +240,17 @@ function EditorInner({
       let hardBreakStyle: HardBreakStyle = 'backslash';
       crepe.editor.config((ctx) => configureMarkdownStringify(ctx, () => hardBreakStyle));
 
-      // 粘贴/拖入图片时 upload 插件先显示 "Upload in progress..." 占位；上传失败它只 console.error，占位永远不会消失。
-      // 失败时交给 App 提示原因，并返回空内容，让插件移除占位且不插入任何东西
+      // 粘贴/拖入图片时 upload 插件先显示占位（默认是英文 "Upload in progress..."，V104-03 换成中文）；
+      // 上传失败它只 console.error，占位永远不会消失。失败时交给 App 提示原因，并返回空内容，让插件移除占位且不插入任何东西
       crepe.editor.config((ctx) => {
         ctx.update(uploadConfig.key, (config) => ({
           ...config,
+          // Crepe 的 uploader 只处理图片文件，所以占位里写"图片"
+          uploadWidgetFactory: (pos, spec) => {
+            const widget = document.createElement('span');
+            widget.textContent = '正在上传图片…';
+            return Decoration.widget(pos, widget, spec);
+          },
           uploader: async (...args) => {
             try {
               return await config.uploader(...args);
