@@ -113,6 +113,40 @@ if (progId) {
   }
 }
 
+// installer.nsh 里一个拼错的 hook 名不会报错，只会静默什么都不做：`customInstallDir` 就是这样
+// 存在了很久，让人以为默认安装目录被指到了 Program Files，其实 electron-builder 从不插入这个
+// 名字的宏。所以这里拿 electron-builder 自己的模板当真相，逐个核对我们定义的 custom* 宏。
+const installerNshPath = path.join(projectRoot, 'build', 'installer.nsh');
+const templatesDir = path.join(projectRoot, 'node_modules', 'app-builder-lib', 'templates', 'nsis');
+if (fs.existsSync(installerNshPath) && fs.existsSync(templatesDir)) {
+  const inserted = new Set();
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (/\.(nsh|nsi)$/.test(entry.name)) {
+        for (const match of fs.readFileSync(full, 'utf8').matchAll(/ifmacrodef\s+(custom\w+)/g)) {
+          inserted.add(match[1].toLowerCase());
+        }
+      }
+    }
+  };
+  walk(templatesDir);
+
+  const defined = [...fs.readFileSync(installerNshPath, 'utf8').matchAll(/^\s*!macro\s+(custom\w+)/gm)]
+    .map((match) => match[1]);
+  for (const name of defined) {
+    if (!inserted.has(name.toLowerCase())) {
+      console.error(
+        `build/installer.nsh defines !macro ${name}, which electron-builder never inserts - `
+        + `it will silently do nothing. Known hooks: ${[...inserted].sort().join(', ')}`,
+      );
+      ok = false;
+    }
+  }
+}
+
 const jreBin = path.join(projectRoot, 'resources', 'jre', 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
 if (!fs.existsSync(jreBin)) {
   console.error(`Missing bundled Java runtime: ${jreBin}`);

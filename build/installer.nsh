@@ -7,10 +7,19 @@
 ; product no longer calls itself.
 !define INSTALL_SUBFOLDER "nextTypora"
 
-; The default directory offered on the installer's directory page.
-!macro customInstallDir
-  StrCpy $INSTDIR "$PROGRAMFILES64\${INSTALL_SUBFOLDER}"
-!macroend
+; There is deliberately NO macro here setting the default directory.
+;
+; This file used to define `customInstallDir`, which looked like it pointed the default at
+; "$PROGRAMFILES64\nextTyproa". electron-builder has no such hook - it never inserts a macro by
+; that name - so the macro was dead from the day it was written and the default was never
+; Program Files. The real default comes from electron-builder's multiUser.nsh: the previous
+; InstallLocation if there is one, otherwise the per-user programs folder
+; ($LocalAppData\Programs\NextTypora), which needs no elevation. That is what we want, so there
+; is nothing to override. Measured, not assumed: a silent install with no /D= lands there.
+;
+; If a default ever does need overriding, the hook is `preInit`, not `customInstallDir`;
+; scripts/verify-dist-resources.js now rejects macro names electron-builder does not insert,
+; so a typo cannot go unnoticed the way this one did.
 
 ; Whatever directory the user picks, install into a subfolder of it rather than scattering
 ; ~190 MB of app files directly into it. Only the directory page calls .onVerifyInstDir, so a

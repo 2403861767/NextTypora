@@ -91,3 +91,59 @@ Windows 的 Uninstall 键，于是「已安装的应用」里看不到安装位�
 - **`customInstallDir` 把默认目录指向 `$PROGRAMFILES64`，而这是个 per-user 安装**
   （`perMachine` 未设置即 false）。GUI 下默认目录因此会落在需要提权的位置。这次没有改——它不是
   本票发现的问题，改它会改变所有用户的默认安装位置，应当单独决定。
+  （**这一条是错的，见下面「更正」一节**：那个宏从来没被调用过，默认目录一直是用户目录。）
+
+## 更正（2026-11-07）：那个「默认装到 Program Files」的说法是错的，宏根本没被调用
+
+去查「要不要把默认目录改成用户目录」的时候发现：**`customInstallDir` 不是 electron-builder 的
+hook**。它从不插入这个名字的宏——`node_modules/app-builder-lib/templates/nsis/` 里
+`ifmacrodef custom*` 的全部名字是：
+
+```
+customCheckAppRunning  customFiles_*        customFinishPage  customHeader
+customInit             customInstall        customInstallmode customPageAfterChangeDir
+customRemoveFiles      customUnInit         customUnInstall   customUnInstallCheck
+customUnInstallCheckCurrentUser             customUninstallPage
+customUnWelcomePage    customWelcomePage
+```
+
+没有 `customInstallDir`。所以那段 `StrCpy $INSTDIR "$PROGRAMFILES64\..."` **自写下那天起就是
+死代码**，默认目录从来不是 Program Files。真正的默认来自 electron-builder 的 `multiUser.nsh`：
+有上次的 `InstallLocation` 就用它，否则用 per-user 的程序目录
+（`$LocalAppData\Programs\NextTypora`），不需要提权。也就是说「改成用户目录」这件事，行为上
+本来就是用户目录，要改的只有那段骗人的死代码。
+
+**实测**（不是读代码）：先卸载（卸载会删掉记着上次位置的 `${INSTALL_REGISTRY_KEY}`），然后在
+**未提权**的进程里跑 `/S /currentuser`、不带 `/D=`：
+
+```
+running elevated right now : False
+exit = 0   elapsed = 8.2s
+InstallLocation            = 'C:\Users\seeleaf\AppData\Local\Programs\NextTypora'
+C:\Program Files\nextTypora exists : False
+C:\Program Files\nextTyproa exists : False
+```
+
+### 改动
+
+1. 删掉死宏 `customInstallDir`，原地写清楚：没有这个 hook、真正的默认是什么、真要覆盖该用
+   `preInit`。
+2. `verify-dist-resources.js` 新增一条检查：把
+   `node_modules/app-builder-lib/templates/nsis/` 里所有 `ifmacrodef custom*` 的名字当真相，
+   `build/installer.nsh` 里定义的每个 `!macro custom*` 都必须在其中，否则报错。
+   **拼错一个 hook 名不会报错、只会静默什么都不做**，这个洞就是这么藏住的；现在它会红。
+   不硬编码 hook 列表，而是从依赖的模板里现读——跟着 electron-builder 升级自动更新。
+
+### 验收
+
+- 把 `!macro customInstallDir` 加回去 → `verify-dist-resources.js` 报
+  `defines !macro customInstallDir, which electron-builder never inserts - it will silently do
+  nothing`，退出 1；删掉后通过。
+- `installer.nsh` 现在只剩两个宏，都是真 hook：`customInstall`、`customUnInstall`。
+- 默认目录实测见上；随后卸载该测试安装（`%LOCALAPPDATA%` 下的空目录也已删掉），
+  重新装回 `D:\software\nextTypora`，`InstallLocation`、ProgId、设置目录哈希都复核无误。
+- `npm run dist:setup` 通过（末尾 `verify:release` 通过），`npm test` 绿
+  （Electron 30/30、后端 138/138、前端 208/208）。
+
+另：卸载程序会留下一个**空的**安装目录（`D:\software\nextTypora` 与
+`%LOCALAPPDATA%\Programs\NextTypora` 都观察到）。这是 NSIS 的常见行为，没有去动它。
