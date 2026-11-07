@@ -34,6 +34,8 @@ interface MarkdownEditorProps {
   typewriterMode?: boolean;
   pendingMarkdownRef?: MutableRefObject<PendingMarkdownReader | null>;
   onImageUploadError?: (error: unknown) => void;
+  /** 代码块右上角的复制按钮复制成功后调用（Milkdown 只在成功时调用，失败时它自己吞掉，见 V104-01） */
+  onCodeCopy?: (code: string) => void;
 }
 
 function EditorInner({
@@ -47,11 +49,13 @@ function EditorInner({
   typewriterMode,
   pendingMarkdownRef,
   onImageUploadError,
+  onCodeCopy,
 }: MarkdownEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const onChangeRef = useRef(onChange);
   const onReadyRef = useRef(onReady);
   const onImageUploadErrorRef = useRef(onImageUploadError);
+  const onCodeCopyRef = useRef(onCodeCopy);
   const notePathRef = useRef(notePath);
   const isDarkRef = useRef(isDark);
   const readerRef = useRef<PendingMarkdownReader | null>(null);
@@ -63,6 +67,7 @@ function EditorInner({
   onChangeRef.current = onChange;
   onReadyRef.current = onReady;
   onImageUploadErrorRef.current = onImageUploadError;
+  onCodeCopyRef.current = onCodeCopy;
   notePathRef.current = notePath;
   isDarkRef.current = isDark;
 
@@ -175,6 +180,8 @@ function EditorInner({
             previewLabel: '预览',
             previewLoading: '<div class="code-preview-loading">正在渲染预览...</div>',
             previewOnlyByDefault: false,
+            // Crepe 的默认值是空函数：复制成功了界面上却什么都不发生（V104-01）
+            onCopy: (code: string) => onCodeCopyRef.current?.(code),
             renderPreview: (language: string, code: string, applyPreview: (value: null | string | HTMLElement) => void) => {
               return renderCodeBlockPreview(language, code, isDarkRef.current, applyPreview);
             },
@@ -261,7 +268,7 @@ function EditorInner({
   );
 }
 
-export function MarkdownEditor({ value, onChange, onReady, noteKey, notePath, spellCheckEnabled, isDark, typewriterMode = false, pendingMarkdownRef, onImageUploadError }: MarkdownEditorProps) {
+export function MarkdownEditor({ value, onChange, onReady, noteKey, notePath, spellCheckEnabled, isDark, typewriterMode = false, pendingMarkdownRef, onImageUploadError, onCodeCopy }: MarkdownEditorProps) {
   return (
     <MilkdownProvider key={noteKey}>
       <EditorInner
@@ -275,6 +282,7 @@ export function MarkdownEditor({ value, onChange, onReady, noteKey, notePath, sp
         typewriterMode={typewriterMode}
         pendingMarkdownRef={pendingMarkdownRef}
         onImageUploadError={onImageUploadError}
+        onCodeCopy={onCodeCopy}
       />
     </MilkdownProvider>
   );

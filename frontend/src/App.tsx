@@ -2439,6 +2439,8 @@ export default function App() {
                     noteKey={editorNoteKey}
                     pendingMarkdownRef={pendingMarkdownRef}
                     onImageUploadError={(uploadError) => showError(describeError(uploadError, '图片上传失败'))}
+                    // 固定 key：代码块复制按钮常被连点，再点一次刷新同一条提示而不是叠一条新的
+                    onCodeCopy={() => { void messageApi.success({ content: '已复制代码', key: 'code-block-copy' }); }}
                     notePath={selectedPath}
                     value={content}
                     onChange={setContent}

@@ -173,6 +173,39 @@ function treeOf(): TreeNode[] {
 const api = await import('./api');
 const { default: App } = await import('./App');
 
+/**
+ * 代码块是懒挂载的：Milkdown 先渲染一个 <pre> 占位，等 IntersectionObserver 报告它可见，才换上 CodeMirror 和
+ * 工具栏（语言选择、复制按钮）。这个替身默认什么都不报告，和原来的空替身一样；需要工具栏的用例调用 revealCodeBlocks()。
+ * Milkdown 的 observer 是模块级单例，会跨用例存活，所以只对仍在文档里的元素报告。
+ */
+const intersectionObservers = new Set<StubIntersectionObserver>();
+
+class StubIntersectionObserver {
+  readonly targets = new Set<Element>();
+  private readonly callback: IntersectionObserverCallback;
+
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback;
+    intersectionObservers.add(this);
+  }
+
+  observe(target: Element) { this.targets.add(target); }
+  unobserve(target: Element) { this.targets.delete(target); }
+  disconnect() { this.targets.clear(); }
+  takeRecords() { return []; }
+
+  reveal() {
+    const entries = [...this.targets]
+      .filter((target) => target.isConnected)
+      .map((target) => ({ target, isIntersecting: true }) as IntersectionObserverEntry);
+    if (entries.length > 0) this.callback(entries, this as unknown as IntersectionObserver);
+  }
+}
+
+function revealCodeBlocks() {
+  act(() => intersectionObservers.forEach((observer) => observer.reveal()));
+}
+
 beforeAll(() => {
   // jsdom 缺少以下浏览器 API：App 的侧栏/动效与 Crepe 的编辑器组件会用到
   Object.defineProperty(window, 'matchMedia', {
@@ -208,12 +241,7 @@ beforeAll(() => {
   if (!('IntersectionObserver' in window)) {
     Object.defineProperty(window, 'IntersectionObserver', {
       configurable: true,
-      value: class {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-        takeRecords() { return []; }
-      },
+      value: StubIntersectionObserver,
     });
   }
   // 偏好设置里自动调整高度的 TextArea 依赖 ResizeObserver，jsdom 同样没有
@@ -1398,6 +1426,76 @@ describe('App (integration with mocked backend)', () => {
       await settle(300);
       expect(tree().getByText('深层笔记.md')).toBeInTheDocument();
       expect(expandedFolders()).toEqual(['归档', '归档/子目录', '项目']);
+    }, 20000);
+  });
+
+  // V104-01：代码块右上角的复制按钮复制成功后，界面上什么都没有发生
+  describe('V104-01: copying a code block', () => {
+    const CODE = 'console.log("你好");';
+    // openApp 等的是编辑器里出现段落，所以代码块前放一段正文
+    const NOTE = `# 笔记\n\n正文\n\n\`\`\`js\n${CODE}\n\`\`\`\n`;
+    let writeText: MockInstance<(text: string) => Promise<void>>;
+
+    beforeEach(() => {
+      writeText = vi.fn(async (_text: string) => undefined);
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    });
+
+    afterEach(() => {
+      delete (navigator as { clipboard?: Clipboard }).clipboard;
+    });
+
+    async function settle(ms = 1500) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    }
+
+    /** 让代码块进入"可见"，等 Milkdown 挂上工具栏，返回其中的复制按钮（按类名找，不按文字：V104-02 会改文字） */
+    async function copyButton(): Promise<HTMLButtonElement> {
+      revealCodeBlocks();
+      return waitFor(() => {
+        const button = document.querySelector<HTMLButtonElement>('.typora-editor .milkdown-code-block .copy-button');
+        expect(button).not.toBeNull();
+        return button!;
+      }, { timeout: 5000 });
+    }
+
+    function copiedToasts(): Element[] {
+      return Array.from(document.querySelectorAll('.ant-message-notice'))
+        .filter((notice) => notice.textContent?.includes('已复制代码'));
+    }
+
+    it('tells the user the code was copied', async () => {
+      await openApp({ 'a.md': NOTE }, ['a.md']);
+
+      fireEvent.click(await copyButton());
+
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(CODE));
+      await waitFor(() => expect(copiedToasts()).toHaveLength(1), { timeout: 3000 });
+    }, 20000);
+
+    it('refreshes the same toast instead of stacking a second one when clicked again', async () => {
+      await openApp({ 'a.md': NOTE }, ['a.md']);
+      const button = await copyButton();
+
+      fireEvent.click(button);
+      await waitFor(() => expect(copiedToasts()).toHaveLength(1), { timeout: 3000 });
+      fireEvent.click(button);
+      await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+      await settle(300);
+
+      expect(copiedToasts()).toHaveLength(1);
+    }, 20000);
+
+    // 空代码块也照样提示：Milkdown 照样 writeText('')，剪贴板确实被清空了（V104-01 的决定，不做特判）
+    it('also confirms copying an empty code block', async () => {
+      await openApp({ 'a.md': '# 笔记\n\n正文\n\n```js\n```\n' }, ['a.md']);
+
+      fireEvent.click(await copyButton());
+
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(''));
+      await waitFor(() => expect(copiedToasts()).toHaveLength(1), { timeout: 3000 });
     }, 20000);
   });
 });
