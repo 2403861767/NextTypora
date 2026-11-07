@@ -178,6 +178,12 @@ function EditorInner({
           },
           [Crepe.Feature.CodeMirror]: {
             previewLabel: '预览',
+            // 工具栏其余文案（V104-02）。没设语言时语言按钮上的 "Text" 是 Milkdown 写死的，没有配置项
+            copyText: '复制',
+            searchPlaceholder: '搜索语言',
+            noResultText: '无匹配语言',
+            // 代码和预览并排时，这个按钮隐藏的是源码、只留预览；仅预览时点它回到编辑
+            previewToggleText: (previewOnly: boolean) => (previewOnly ? '编辑' : '隐藏代码'),
             previewLoading: '<div class="code-preview-loading">正在渲染预览...</div>',
             previewOnlyByDefault: false,
             // Crepe 的默认值是空函数：复制成功了界面上却什么都不发生（V104-01）

@@ -1498,4 +1498,46 @@ describe('App (integration with mocked backend)', () => {
       await waitFor(() => expect(copiedToasts()).toHaveLength(1), { timeout: 3000 });
     }, 20000);
   });
+
+  describe('V104-02: code block toolbar labels', () => {
+    /** 让代码块进入"可见"，等 Milkdown 挂上工具栏，返回第一个匹配 selector 的工具栏元素 */
+    async function toolbarElement<T extends Element>(selector: string): Promise<T> {
+      revealCodeBlocks();
+      return waitFor(() => {
+        const element = document.querySelector<T>(`.typora-editor .milkdown-code-block ${selector}`);
+        expect(element).not.toBeNull();
+        return element!;
+      }, { timeout: 5000 });
+    }
+
+    const label = (element: Element) => element.textContent?.trim();
+
+    it('labels the copy button in Chinese', async () => {
+      await openApp({ 'a.md': '# 笔记\n\n正文\n\n```js\nlet a = 1;\n```\n' }, ['a.md']);
+
+      expect(label(await toolbarElement('.copy-button'))).toBe('复制');
+    }, 20000);
+
+    it('shows the language search placeholder and its no-match text in Chinese', async () => {
+      await openApp({ 'a.md': '# 笔记\n\n正文\n\n```js\nlet a = 1;\n```\n' }, ['a.md']);
+
+      fireEvent.click(await toolbarElement('.language-button'));
+      const search = await toolbarElement<HTMLInputElement>('.search-input');
+      expect(search.placeholder).toBe('搜索语言');
+
+      fireEvent.input(search, { target: { value: 'no-such-language-xyz' } });
+      expect(label(await toolbarElement('.language-list-item.no-result'))).toBe('无匹配语言');
+    }, 20000);
+
+    // 有预览的代码块才有这个切换按钮；LaTeX 预览是同步渲染的（KaTeX），jsdom 里测得到
+    it('names the preview toggle after what it does: hide the code, then edit it again', async () => {
+      await openApp({ 'a.md': '# 公式\n\n正文\n\n```latex\nE = mc^2\n```\n' }, ['a.md']);
+
+      const toggle = await toolbarElement<HTMLButtonElement>('.preview-toggle-button');
+      expect(label(toggle)).toBe('隐藏代码');
+
+      fireEvent.click(toggle);
+      await waitFor(() => expect(label(document.querySelector('.typora-editor .preview-toggle-button')!)).toBe('编辑'));
+    }, 20000);
+  });
 });
