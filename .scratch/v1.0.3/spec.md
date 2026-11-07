@@ -1,6 +1,6 @@
 # NextTypora 1.0.3 — 减法与发布卫生
 
-Status: ready-for-agent
+Status: resolved
 
 ## 本版主题
 
@@ -213,3 +213,40 @@ content readable               = SECRET     ← 金库外文件被成功读出
 | 17 | packaged-build-retest-minimal | 10 |
 
 ## Comments
+
+## 收尾（2026-11-07）
+
+`Status` 从 `ready-for-agent` 改为 `resolved`。`ready-for-agent` 是
+`docs/agents/triage-labels.md` 的分流标签，意思是「已写清、可以交给 agent 做」——活干完之后它就
+不再成立了；用 `resolved` 与 19 张票保持同一套词汇（`docs/agents/issue-tracker.md` 的工作态）。
+
+### 票
+
+原计划 17 张，实际 19 张，全部 `resolved`：
+
+- 多出来的两张都是做的过程中撞上的，不在原 spec 内：
+  **V103-18**（`MarkdownEditor` 的"保持原样"用例组在负载下随机失败，做 V103-15 时发现）、
+  **V103-19**（打包元数据三处 + 没人保证 `release/` 与 HEAD 同步，做 V103-17 的打包版复测时发现）。
+- 第 10 节那套打包版复测**真的在安装版上跑完了**（V103-17），包括 spec 当时认为"只能真人做"的
+  原生对话框、真实中文输入法联想、从资源管理器真实拖拽三项；驱动脚本提交在
+  `test/v103-17-retest/`，而不是留在临时目录里——上一套就是因为被 `.gitignore` 盖住而消失的。
+
+### 「待确认」那三条
+
+用户始终没有明确回答，三条都按本文件写的推荐做了，没有被推翻：
+
+- 第 11 节测试加固三条 → V103-02 / V103-14 / V103-15，均 resolved（V103-18 是它的延伸）
+- 「本版不做」的显式记录方式 → 保留，并在复测与打包两处各引用过一次
+- vault / workspace 本版不改名 → 未改，`GLOSSARY.md` 仍记目标状态，改名留在 1.0.4
+
+### 两处没能验证的，不要当成已验证
+
+- **Ctrl+Shift+E 的键盘路径**：本机被应用之外的全局热键吃掉（只丢 `KeyE`，其它 Ctrl+Shift
+  组合都到达，两种输入法下一致），不是应用缺陷，但这条快捷键在这台机器上测不了。
+- **GUI 安装流程本身**（许可页 / 目录页 / 完成页）：为了装到指定目录走的是 `/S /D=`，所以
+  `.onVerifyInstDir` 追加子目录那条分支没被触发，"GUI 下选 X 会装进 X\nextTypora"仍是读代码
+  得出的。默认安装目录那条已实测（未提权落在 `%LOCALAPPDATA%\Programs\NextTypora`）。
+
+### 本版不做的，仍然不做
+
+「本版不做」那张表原样有效，没有偷偷做掉任何一项；多显示器、万级工作区性能、打印仍在 1.0.4+。
