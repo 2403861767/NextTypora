@@ -56,7 +56,7 @@ export function SidebarPanel({
   return (
     <aside className={`typora-sidebar sidebar-unified ${open ? 'open' : 'closed'}`}>
       <div className="sidebar-brand-row">
-        <span className="sidebar-brand-title">Workspace</span>
+        <span className="sidebar-brand-title">工作区</span>
         <Dropdown menu={rootMenu} trigger={['click']} placement="bottomRight">
           <button type="button" className="sidebar-more-btn" title="侧边栏选项" aria-label="侧边栏选项">...</button>
         </Dropdown>
@@ -69,7 +69,7 @@ export function SidebarPanel({
           className={`sidebar-tab ${tab === 'files' ? 'active' : ''}`}
           onClick={() => onTabChange('files')}
         >
-          Files
+          文件
         </button>
         <button
           type="button"
@@ -78,7 +78,7 @@ export function SidebarPanel({
           className={`sidebar-tab ${tab === 'file-list' ? 'active' : ''}`}
           onClick={() => onTabChange('file-list')}
         >
-          List
+          列表
         </button>
         <button
           type="button"
@@ -87,7 +87,7 @@ export function SidebarPanel({
           className={`sidebar-tab ${tab === 'outline' ? 'active' : ''}`}
           onClick={() => onTabChange('outline')}
         >
-          Outline
+          大纲
         </button>
         <button
           type="button"
@@ -96,7 +96,7 @@ export function SidebarPanel({
           className={`sidebar-tab ${tab === 'search' ? 'active' : ''}`}
           onClick={() => onTabChange('search')}
         >
-          Search
+          搜索
         </button>
       </div>
 

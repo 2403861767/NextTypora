@@ -2255,6 +2255,15 @@ html[data-theme='dark'] .search-index-warning {
   border-bottom-color: var(--border);
 }
 
+/* V104-06：Crepe 给菜单列表定死 max-height: 420px（整个菜单约 482px）。窗口较矮、光标在中下部时上下都放不下，
+   菜单翻到上方后顶部被 .typora-editor 的溢出裁掉。按视口缩短列表，让菜单不超过编辑区可见高度的一半：
+   编辑区高约 100vh - 144px，菜单 = 列表 + 62px，再加 10px 偏移和一行光标，所以列表取 50vh - 180px（留 20px 余量），
+   最少 120px，最多仍是 Crepe 的 420px。比 Crepe 的选择器多一个类，不依赖样式表的加载顺序。
+   slashMenuLayout.test.ts 按这些尺寸校验 */
+.typora-editor .milkdown .milkdown-slash-menu .menu-groups {
+  max-height: clamp(120px, calc(50vh - 180px), 420px);
+}
+
 .typora-editor .milkdown-slash-menu .menu-groups .menu-group h6 {
   color: var(--text-muted);
   font-weight: 600;

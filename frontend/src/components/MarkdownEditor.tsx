@@ -14,6 +14,7 @@ import { proxyImageUrl } from '../utils/assets';
 import { uploadEditorImage } from '../utils/imageUpload';
 import { normalizeEditorImageMarkdown } from '../utils/markdownImages';
 import { joinFrontmatter, splitFrontmatter } from '../utils/frontmatter';
+import { slashMenuChineseTrigger } from '../utils/slashMenuTrigger';
 import { configureMarkdownStringify, createMarkdownBlockPreserver, type HardBreakStyle, type MarkdownBlockPreserver } from '../utils/preserveMarkdownBlocks';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/classic.css';
@@ -239,6 +240,9 @@ function EditorInner({
       // 硬换行沿用这篇文档原来的写法（载入后由 preserver 检测）
       let hardBreakStyle: HardBreakStyle = 'backslash';
       crepe.editor.config((ctx) => configureMarkdownStringify(ctx, () => hardBreakStyle));
+
+      // 中文输入法按 / 打出的「、」「／」也能唤起斜杠菜单（V104-05）
+      crepe.editor.use(slashMenuChineseTrigger);
 
       // 粘贴/拖入图片时 upload 插件先显示占位（默认是英文 "Upload in progress..."，V104-03 换成中文）；
       // 上传失败它只 console.error，占位永远不会消失。失败时交给 App 提示原因，并返回空内容，让插件移除占位且不插入任何东西

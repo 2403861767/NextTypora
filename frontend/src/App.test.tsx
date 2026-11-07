@@ -1297,16 +1297,16 @@ describe('App (integration with mocked backend)', () => {
 
     it('opens the outline and file sidebars with the key events a US keyboard sends', async () => {
       await openApp({ 'a.md': '# A\n\n正文\n' }, ['a.md']);
-      expect(isSidebarTabSelected('Files')).toBe(true);
+      expect(isSidebarTabSelected('文件')).toBe(true);
 
       // 美式键盘上的 Ctrl+Shift+1：key 是 '!'，code 仍是 Digit1
       pressShortcut('!', { code: 'Digit1', shiftKey: true });
-      expect(isSidebarTabSelected('Outline')).toBe(true);
-      expect(isSidebarTabSelected('Files')).toBe(false);
+      expect(isSidebarTabSelected('大纲')).toBe(true);
+      expect(isSidebarTabSelected('文件')).toBe(false);
 
       pressShortcut('#', { code: 'Digit3', shiftKey: true });
-      expect(isSidebarTabSelected('Files')).toBe(true);
-      expect(isSidebarTabSelected('Outline')).toBe(false);
+      expect(isSidebarTabSelected('文件')).toBe(true);
+      expect(isSidebarTabSelected('大纲')).toBe(false);
     }, 20000);
   });
 
@@ -1609,6 +1609,88 @@ describe('App (integration with mocked backend)', () => {
 
       expect(label(await element(`${edit} .uploader`))).toBe('上传');
       expect(label(await element(`${edit} .placeholder .text`))).toBe('或粘贴链接');
+    }, 20000);
+  });
+
+  // V104-04：侧栏顶部的标题和四个标签是项目自己写的英文，旁边的 aria-label 和右侧的「大纲」却是中文
+  describe('V104-04: sidebar labels', () => {
+    it('names the sidebar and its tabs in Chinese', async () => {
+      await openApp({ 'a.md': '# A\n\n正文\n' }, ['a.md']);
+
+      expect(document.querySelector('.sidebar-brand-title')?.textContent).toBe('工作区');
+      const tabs = within(screen.getByRole('tablist', { name: '侧边栏' })).getAllByRole('tab');
+      expect(tabs.map((tab) => tab.textContent)).toEqual(['文件', '列表', '大纲', '搜索']);
+    }, 20000);
+  });
+
+  // V104-05：中文输入法在中文标点模式下按 / 键打出的是「、」，全角模式下是「／」，
+  // 而 Crepe 的斜杠菜单只认半角 "/"，占位文字「输入 / 唤起命令」对用中文输入法的人不成立
+  describe('V104-05: opening the slash menu from a Chinese input method', () => {
+    const menuShown = () =>
+      document.querySelector<HTMLElement>('.typora-editor .milkdown-slash-menu')?.dataset.show === 'true';
+
+    async function settle(ms = 300) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    }
+
+    /**
+     * 段落里只有一个占位字符 x，把它换成 typed：ProseMirror 读到的就是"这个块里唯一的文字是 typed"。
+     * 菜单只在编辑器有焦点、光标位于块末尾时弹出，所以先聚焦编辑器，改完再把 DOM 选区放到这段文字末尾
+     * （ProseMirror 读取 DOM 改动时一并读取 DOM 选区）
+     */
+    function typeAsOnlyText(typed: string) {
+      const text = editorParagraphs().find((paragraph) => paragraph.textContent === 'x')?.firstChild;
+      expect(text?.nodeType).toBe(Node.TEXT_NODE);
+      document.querySelector<HTMLElement>('.typora-editor .ProseMirror')!.focus();
+      (text as Text).data = typed;
+      document.getSelection()!.collapse(text!, typed.length);
+    }
+
+    // "/" 是对照：它在改动前就能唤起菜单，说明这里的输入方式在 jsdom 里确实能让菜单弹出
+    it.each(['/', '、', '／'])('opens the menu when %s is the only text in a paragraph, showing it as /', async (typed) => {
+      await openApp({ 'a.md': '# 笔记\n\n正文\n\nx\n' }, ['a.md']);
+
+      typeAsOnlyText(typed);
+
+      await waitFor(() => expect(menuShown()).toBe(true), { timeout: 3000 });
+      expect(editorParagraphs().map((paragraph) => paragraph.textContent)).toContain('/');
+    }, 20000);
+
+    it('turns it back into 、 and closes the menu on an immediate Backspace', async () => {
+      await openApp({ 'a.md': '# 笔记\n\n正文\n\nx\n' }, ['a.md']);
+      typeAsOnlyText('、');
+      await waitFor(() => expect(menuShown()).toBe(true), { timeout: 3000 });
+
+      fireEvent.keyDown(document.querySelector('.typora-editor .ProseMirror')!, { key: 'Backspace', code: 'Backspace', keyCode: 8 });
+
+      await waitFor(() => expect(editorParagraphs().map((paragraph) => paragraph.textContent)).toContain('、'), { timeout: 3000 });
+      await waitFor(() => expect(menuShown()).toBe(false), { timeout: 3000 });
+    }, 20000);
+
+    // 菜单本来就不会弹出的地方，「、」照常是顿号
+    it('leaves a 、 after other text alone', async () => {
+      await openApp({ 'a.md': '# 笔记\n\n正文\n' }, ['a.md']);
+
+      document.querySelector<HTMLElement>('.typora-editor .ProseMirror')!.focus();
+      typeAtEndOfParagraph('正文', '、');
+      const text = editorParagraphs().find((paragraph) => paragraph.textContent === '正文、')!.lastChild!;
+      document.getSelection()!.collapse(text, text.textContent!.length);
+      await settle();
+
+      expect(editorParagraphs().map((paragraph) => paragraph.textContent)).toContain('正文、');
+      expect(menuShown()).toBe(false);
+    }, 20000);
+
+    it('leaves a 、 alone in a list item, where the menu never opens', async () => {
+      await openApp({ 'a.md': '# 笔记\n\n正文\n\n- x\n' }, ['a.md']);
+
+      typeAsOnlyText('、');
+      await settle();
+
+      expect(editorParagraphs().map((paragraph) => paragraph.textContent)).toContain('、');
+      expect(menuShown()).toBe(false);
     }, 20000);
   });
 });
