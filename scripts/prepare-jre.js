@@ -128,6 +128,14 @@ function main() {
   if (!fs.existsSync(javaBin)) {
     throw new Error(`Packaged JRE invalid: ${javaBin} not found`);
   }
+
+  // classes_nocoops.jsa 是关掉压缩指针时（堆上限 ≥ 32GB）用的基础类缓存。后端固定 -Xmx512m
+  // （electron/backendLaunch.js），压缩指针永远开着，JVM 只会用 classes.jsa，这份 12.5MB 白占地方
+  // （安装包约 2.3MB）。代价是 JRE 和堆上限绑在一起：哪天把堆上限提到 32GB 以上，要把它留下来，
+  // 否则基础类缓存和建立在它上面的应用类缓存都会悄悄失效（test:packaged 的类缓存用例会报出来）。
+  // jlink 的 --generate-cds-archive 和整个复制 JDK 的那条路都会带上它，所以两条路都在这里删。
+  const nocoopsArchive = path.join(jreDir, process.platform === 'win32' ? 'bin' : 'lib', 'server', 'classes_nocoops.jsa');
+  fs.rmSync(nocoopsArchive, { force: true });
   console.log(`JRE ready: ${jreDir}`);
 }
 

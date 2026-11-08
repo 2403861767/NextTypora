@@ -16,9 +16,13 @@ function readExpectedVersion() {
   return (process.env.EXPECT_VERSION || '').trim() || null;
 }
 
+const backendDir = path.join(projectRoot, 'resources', 'backend');
 const requiredPaths = [
   path.join(projectRoot, 'backend', 'target', 'backend.jar'),
-  path.join(projectRoot, 'resources', 'backend.jar'),
+  path.join(backendDir, 'app.jar'),
+  path.join(backendDir, 'lib'),
+  path.join(backendDir, 'app.jsa'),
+  path.join(backendDir, 'app.jsa.json'),
   path.join(projectRoot, 'frontend', 'dist', 'index.html'),
   path.join(projectRoot, 'electron', 'main.js'),
   path.join(projectRoot, 'electron', 'preload.js'),
@@ -165,6 +169,49 @@ if (!fs.existsSync(jreCdsArchive)) {
     + '  scripts/prepare-jre.js must run jlink with --generate-cds-archive.',
   );
   ok = false;
+}
+
+// 后端布局（V105-05）：普通 classpath 加应用类缓存。app.jar 的 manifest Class-Path 就是 JVM 实际用的
+// classpath，lib/ 必须和它一一对应；app.jsa.json 要覆盖其中每个 jar，main.js 才能在安装后把它们的修改
+// 时间都改回来。改回 Spring Boot 胖 jar 不会报错，只会悄悄慢下来，所以 Main-Class 也在这里查。
+// 类缓存到底能不能命中，由 test:packaged 的类缓存用例检查。
+const appJar = path.join(backendDir, 'app.jar');
+const libDir = path.join(backendDir, 'lib');
+if (fs.existsSync(appJar) && fs.existsSync(libDir)) {
+  const { readClassPath, readManifest } = require('./jarManifest');
+  const mainClass = readManifest(appJar)['Main-Class'];
+  if (mainClass !== 'com.nexttyproa.NextTyproaApplication') {
+    console.error(`${appJar} has Main-Class ${mainClass}; the backend must ship as a plain jar, not a Spring Boot fat jar.`);
+    ok = false;
+  }
+
+  const classPath = readClassPath(appJar).map((entry) => entry.replace(/^lib\//, ''));
+  const libJars = fs.readdirSync(libDir).filter((name) => name.endsWith('.jar'));
+  for (const name of classPath.filter((entry) => !libJars.includes(entry))) {
+    console.error(`lib/${name} is on app.jar's Class-Path but missing from ${libDir}`);
+    ok = false;
+  }
+  for (const name of libJars.filter((jar) => !classPath.includes(jar))) {
+    console.error(`${path.join(libDir, name)} is not on app.jar's Class-Path; scripts/copy-backend-jar.js copies only what is.`);
+    ok = false;
+  }
+
+  // V105-03 去掉的 flexmark-all 及其带进来、实际用不到的 jar（约 20MB）。
+  const droppedByV10503 = /^(flexmark-all|flexmark-pdf-converter|flexmark-profile-pegdown|icu4j|pdfbox|fontbox|xmpbox|openhtmltopdf|graphics2d|jsoup|commons-logging)-/;
+  for (const name of libJars.filter((jar) => droppedByV10503.test(jar))) {
+    console.error(`${name} is back in ${libDir}; V105-03 removed it (see .scratch/v1.0.5/issues/03-trim-flexmark-dependency.md).`);
+    ok = false;
+  }
+
+  const recordFile = path.join(backendDir, 'app.jsa.json');
+  if (fs.existsSync(recordFile)) {
+    const recorded = JSON.parse(fs.readFileSync(recordFile, 'utf8')).jars.map((jar) => jar.path).sort();
+    const expected = ['app.jar', ...libJars.map((name) => `lib/${name}`)].sort();
+    if (JSON.stringify(recorded) !== JSON.stringify(expected)) {
+      console.error(`${recordFile} does not list exactly app.jar and lib/*.jar; re-run node scripts/train-backend-cds.js.`);
+      ok = false;
+    }
+  }
 }
 
 if (!ok) {

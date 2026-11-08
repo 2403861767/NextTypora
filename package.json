@@ -24,7 +24,7 @@
     "build": "npm run build:backend && npm run build:frontend",
     "dist:verify": "npm test && npm run build && npm run prepare:resources && node scripts/verify-dist-resources.js",
     "verify:release": "node scripts/verify-release-artifact.js",
-    "prepare:resources": "node scripts/copy-backend-jar.js && node scripts/prepare-jre.js && npm run test:packaged",
+    "prepare:resources": "node scripts/copy-backend-jar.js && node scripts/prepare-jre.js && node scripts/train-backend-cds.js && npm run test:packaged",
     "dist": "npm run build && npm run prepare:resources && npx electron-builder --win dir && powershell -ExecutionPolicy Bypass -File scripts/package-zip.ps1",
     "dist:setup": "npm run build && npm run prepare:resources && npx electron-builder --win nsis && npm run verify:release",
     "dist:dir": "npm run build && npm run prepare:resources && npx electron-builder --win dir",
@@ -53,8 +53,8 @@
     ],
     "extraResources": [
       {
-        "from": "resources/backend.jar",
-        "to": "backend.jar"
+        "from": "resources/backend",
+        "to": "backend"
       },
       {
         "from": "build/icon.ico",

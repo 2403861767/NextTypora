@@ -4,7 +4,8 @@ const { spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const { loadSettings, patchSettings } = require('./settings');
-const { buildBackendArgs } = require('./backendLaunch');
+const { buildBackendLaunch } = require('./backendLaunch');
+const { restoreJarTimes } = require('./backendArchive');
 const {
   normalizePicGoServerUrl,
   sanitizeSettingsPatch,
@@ -157,11 +158,20 @@ function startBackend() {
     backendConfig.token = token;
 
     const javaBin = resolveJavaBin();
-    const jarPath = getResourcesPath('backend.jar');
+    // 参数、工作目录只从 backendLaunch.js 取，test:packaged 和构建时的训练运行用的是同一份（V105-04、05）
+    const launch = buildBackendLaunch(getResourcesPath());
 
-    if (!fs.existsSync(jarPath)) {
-      reject(new Error(`Backend jar not found: ${jarPath}`));
+    if (!fs.existsSync(launch.jarPath)) {
+      reject(new Error(`Backend jar not found: ${launch.jarPath}`));
       return;
+    }
+
+    // 安装包不保存文件修改时间，jar 的修改时间和生成应用类缓存时对不上，JVM 就悄悄不用缓存。
+    // 按构建时的记录改回来；失败只是没提速，后端照样启动（V105-05，见 backendArchive.js）
+    const archive = restoreJarTimes(launch.cwd);
+    if (archive.status !== 'ok') {
+      console.warn(`[backend] app class archive: ${archive.status}${archive.detail ? ` (${archive.detail})` : ''}`
+        + `${archive.restored.length ? `, restored ${archive.restored.length} jar mtimes` : ''}`);
     }
 
     const settings = loadSettings(app.getPath('userData'));
@@ -175,8 +185,8 @@ function startBackend() {
       NEXTTYPROA_LOG_FILE: path.join(app.getPath('logs'), 'backend.log'),
     };
 
-    // JVM 参数只从 backendLaunch.js 取，test:packaged 用的是同一份（V105-04）
-    backendProcess = spawn(javaBin, buildBackendArgs(jarPath), {
+    backendProcess = spawn(javaBin, launch.args, {
+      cwd: launch.cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

@@ -9,6 +9,7 @@ Thumbs.db
 resources/jre/
 resources/mysql/
 resources/backend.jar
+resources/backend/
 .env
 *.log
 .workflow_runtime/

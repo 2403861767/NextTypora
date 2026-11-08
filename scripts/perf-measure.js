@@ -55,7 +55,9 @@ const BUILD_INPUTS = [
   'package.json',
   'package-lock.json',
   'scripts/copy-backend-jar.js',
+  'scripts/jarManifest.js',
   'scripts/prepare-jre.js',
+  'scripts/train-backend-cds.js',
   ':(glob,exclude)**/*.test.*',
   ':(exclude)backend/src/test',
 ];

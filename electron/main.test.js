@@ -461,15 +461,20 @@ test('V103-19: the file association ProgId is app-specific and installer.nsh agr
 
 /**
  * 按打包版启动 main.js：后端是一个假的 java 进程（child_process.spawn 的替身），由测试决定它什么时候
- * 打出端口、什么时候退出。backend.jar 放在临时的 resources 目录里，withJar=false 模拟 jar 不见了。
+ * 打出端口、什么时候退出。后端放在临时的 resources/backend 里（app.jar，V105-05 的布局），
+ * withJar=false 模拟 app.jar 不见了；prepare(backendDir) 在 main.js 启动前往里面放别的文件。
+ * spawn 时 onSpawn(child) 先跑一遍，用来看那一刻磁盘上的样子。
  * 不等主窗口：主窗口什么时候创建正是这里要测的。
  */
-async function bootPackaged(t, { withJar = true } = {}) {
+async function bootPackaged(t, { withJar = true, prepare, onSpawn } = {}) {
   const fake = createFakeElectron();
   fake.electron.app.isPackaged = true;
   const resources = fs.mkdtempSync(path.join(os.tmpdir(), 'nexttyproa-resources-'));
-  const jarPath = path.join(resources, 'backend.jar');
+  const backendDir = path.join(resources, 'backend');
+  const jarPath = path.join(backendDir, 'app.jar');
+  fs.mkdirSync(backendDir);
   if (withJar) fs.writeFileSync(jarPath, '');
+  if (prepare) prepare(backendDir);
 
   const backends = [];
   const realChildProcess = require('child_process');
@@ -480,6 +485,7 @@ async function bootPackaged(t, { withJar = true } = {}) {
       Object.assign(child, {
         command,
         args,
+        cwd: options?.cwd,
         env: options?.env ?? {},
         stdout: new EventEmitter(),
         stderr: new EventEmitter(),
@@ -500,6 +506,7 @@ async function bootPackaged(t, { withJar = true } = {}) {
           return true;
         },
       });
+      if (onSpawn) onSpawn(child);
       backends.push(child);
       return child;
     },
@@ -522,8 +529,7 @@ async function bootPackaged(t, { withJar = true } = {}) {
     globalThis.fetch = originalFetch;
     if (hadResourcesPath) process.resourcesPath = originalResourcesPath;
     else delete process.resourcesPath;
-    if (withJar) fs.unlinkSync(jarPath);
-    fs.rmdirSync(resources);
+    fs.rmSync(resources, { recursive: true, force: true });
     delete require.cache[MAIN_PATH];
   });
 
@@ -556,7 +562,7 @@ async function bootPackaged(t, { withJar = true } = {}) {
     return tracked;
   };
 
-  return { fake, backends, healthRequests, mainWindow, invoke, track, jarPath };
+  return { fake, backends, healthRequests, mainWindow, invoke, track, jarPath, backendDir, resources };
 }
 
 // V105-02：whenReady 里原来是串行的——先显示启动画面，等后端打出端口、健康检查通过，才创建主窗口。
@@ -611,7 +617,7 @@ test('V105-02: a backend that dies after the window is shown → error dialog ov
   assert.ok(pendingConfig.error, 'the renderer waiting in getConfig learns that the start failed');
 });
 
-test('V105-02: a missing backend.jar → error dialog, then quit, without the window ever showing', async (t) => {
+test('V105-02: a missing backend jar (resources/backend/app.jar) → error dialog, then quit, without the window ever showing', async (t) => {
   const app = await bootPackaged(t, { withJar: false });
 
   assert.equal(app.fake.state.errorDialogs.length, 1);
@@ -648,24 +654,68 @@ test('V105-02: after backend:restart, getConfig hands out the new port and token
 });
 
 // V105-04：后端的 JVM 参数只有 backendLaunch.js 一个来源，test:packaged 也从那里取。
-// main.js 自己拼 ['-jar', jarPath] 的话，测试测的是精简参数，发布出去的却是 JVM 默认值（G1、4GB 堆上限）
-test('V105-04: the packaged backend starts with the JVM flags from backendLaunch.js, also after a restart', async (t) => {
-  const { BACKEND_JVM_ARGS, buildBackendArgs } = require('./backendLaunch');
+// main.js 自己拼 ['-jar', jarPath] 的话，测试测的是精简参数，发布出去的却是 JVM 默认值（G1、4GB 堆上限）。
+// V105-05：参数里还有应用类缓存，classpath 和缓存都是相对 resources/backend 的路径，spawn 的工作目录
+// 必须就是那里——工作目录不对，JVM 找不到 app.jar，或者悄悄不用缓存。
+test('V105-05: the packaged backend starts with the args and working directory from backendLaunch.js, also after a restart', async (t) => {
+  const { BACKEND_JVM_ARGS, buildBackendLaunch } = require('./backendLaunch');
   const app = await bootPackaged(t);
+  const expected = buildBackendLaunch(app.resources);
 
-  assert.deepEqual(app.backends[0].args, buildBackendArgs(app.jarPath));
+  assert.deepEqual(app.backends[0].args, expected.args);
+  assert.equal(app.backends[0].cwd, app.backendDir);
+  assert.equal(expected.cwd, app.backendDir);
   // JVM 参数必须在 -jar 之前，放在后面会被当成传给应用的参数
   assert.deepEqual(app.backends[0].args.slice(0, BACKEND_JVM_ARGS.length), [...BACKEND_JVM_ARGS]);
+  assert.ok(app.backends[0].args.includes('-XX:SharedArchiveFile=app.jsa'), app.backends[0].args.join(' '));
 
   app.backends[0].print('NEXTTYPROA_PORT=43210');
   await app.invoke('backend:getConfig');
   const restart = app.track(app.invoke('backend:restart'));
   await settle();
   assert.equal(app.backends.length, 2, 'the restart started a new backend');
-  assert.deepEqual(app.backends[1].args, buildBackendArgs(app.jarPath), 'a restarted backend gets the same flags');
+  assert.deepEqual(app.backends[1].args, expected.args, 'a restarted backend gets the same flags');
+  assert.equal(app.backends[1].cwd, app.backendDir, 'a restarted backend runs in the same directory');
   app.backends[1].print('NEXTTYPROA_PORT=43211');
   await restart.done;
   assert.equal(restart.error, undefined);
+});
+
+// V105-05：安装包不保存文件修改时间（electron-builder 的 7z 用了 -mtm=off），装出来的 jar 修改时间
+// 和生成 app.jsa 时对不上，JVM 就悄悄不用应用类缓存。main.js 必须在 spawn 之前按记录改回来。
+test('V105-05: jar mtimes dropped by the installer are restored before java starts', async (t) => {
+  const { RECORD_FILE, recordArchiveJars } = require('./backendArchive');
+  const builtAt = new Date('2026-11-08T05:51:13.000Z');
+  const installedAt = new Date('2026-12-01T09:30:47.000Z');
+  const jars = ['app.jar', path.join('lib', 'spring-core-6.1.6.jar')];
+  const mtimeAtSpawn = {};
+
+  const app = await bootPackaged(t, {
+    prepare(backendDir) {
+      fs.mkdirSync(path.join(backendDir, 'lib'));
+      for (const jar of jars) {
+        fs.writeFileSync(path.join(backendDir, jar), `content of ${jar}`);
+        fs.utimesSync(path.join(backendDir, jar), builtAt, builtAt);
+      }
+      recordArchiveJars(backendDir);
+      for (const jar of jars) fs.utimesSync(path.join(backendDir, jar), installedAt, installedAt);
+    },
+    onSpawn(child) {
+      for (const jar of jars) mtimeAtSpawn[jar] = fs.statSync(path.join(child.cwd, jar)).mtimeMs;
+    },
+  });
+
+  assert.ok(fs.existsSync(path.join(app.backendDir, RECORD_FILE)));
+  assert.equal(app.backends.length, 1, 'the backend was started');
+  for (const jar of jars) {
+    assert.equal(mtimeAtSpawn[jar], builtAt.getTime(), `${jar} had its build mtime back when java was spawned`);
+  }
+});
+
+test('V105-05: a backend directory without an archive record still starts the backend', async (t) => {
+  const app = await bootPackaged(t);
+  assert.equal(app.backends.length, 1);
+  assert.equal(app.fake.state.errorDialogs.length, 0);
 });
 
 // 开发模式：后端由 npm run dev 单独启动，getConfig 给的是环境变量里的配置

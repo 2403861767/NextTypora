@@ -20,6 +20,11 @@
     <properties>
         <java.version>17</java.version>
         <flexmark.version>0.64.8</flexmark.version>
+        <!-- 不打 Spring Boot 胖 jar（V105-05）：嵌套 jar 由 Spring Boot 自己的类加载器加载，应用类缓存
+             （AppCDS）覆盖不到。target/backend.jar 是只有应用类的普通 jar，依赖在 target/lib/，
+             manifest 的 Class-Path 指向 lib/。spring-boot:run（开发模式）不受影响。
+             见 .scratch/v1.0.5/issues/05-plain-classpath-and-appcds.md -->
+        <spring-boot.repackage.skip>true</spring-boot.repackage.skip>
     </properties>
 
     <dependencies>
@@ -88,6 +93,38 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <!-- 普通 classpath 布局：java -jar app.jar 直接跑，Class-Path 按依赖顺序列出 lib/ 下的每个 jar。
+                 scripts/copy-backend-jar.js 按这份 Class-Path 把 jar 复制到 resources/backend/。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.nexttyproa.NextTyproaApplication</mainClass>
+                            <addClasspath>true</addClasspath>
+                            <classpathPrefix>lib/</classpathPrefix>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-runtime-dependencies</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeScope>runtime</includeScope>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.jacoco</groupId>
