@@ -1,0 +1,182 @@
+{
+  "1.0.4": {
+    "date": "2026-11-08",
+    "machine": {
+      "cpu": "12th Gen Intel(R) Core(TM) i5-12500H",
+      "logicalCpus": 12,
+      "memoryGB": 15.7,
+      "os": "Windows 10.0.26200"
+    },
+    "build": {
+      "commit": "c244a95",
+      "uncommittedBuildInputs": [],
+      "exe": "release/win-unpacked/NextTypora.exe",
+      "fileVersion": "1.0.4"
+    },
+    "method": {
+      "workspace": "test/e2e-vault",
+      "restoredNote": "ascii-notes.md",
+      "warmupRounds": 1,
+      "rounds": 3,
+      "idleSeconds": 20
+    },
+    "startupMs": 4760,
+    "windowMs": 4087,
+    "treeMs": 4760,
+    "noteMs": 4760,
+    "memoryMB": 305.6,
+    "processesMB": {
+      "main": 27.7,
+      "gpu": 47.8,
+      "network": 6.9,
+      "java": 158.5,
+      "renderer": 63.9,
+      "conhost": 0.8
+    },
+    "rounds": [
+      {
+        "windowMs": 4606,
+        "treeMs": 5336,
+        "noteMs": 5336,
+        "startupMs": 5336,
+        "memoryMB": 305.6,
+        "processesMB": {
+          "main": 27.7,
+          "gpu": 47.8,
+          "network": 6.9,
+          "java": 158.5,
+          "renderer": 63.9,
+          "conhost": 0.8
+        },
+        "processCount": 6,
+        "backend": {
+          "springSec": 3.052,
+          "jvmSec": 3.987
+        }
+      },
+      {
+        "windowMs": 4087,
+        "treeMs": 4760,
+        "noteMs": 4760,
+        "startupMs": 4760,
+        "memoryMB": 307.6,
+        "processesMB": {
+          "main": 30.2,
+          "gpu": 46.9,
+          "network": 6.9,
+          "java": 161,
+          "renderer": 61.8,
+          "conhost": 0.8
+        },
+        "processCount": 6,
+        "backend": {
+          "springSec": 2.682,
+          "jvmSec": 3.491
+        }
+      },
+      {
+        "windowMs": 4058,
+        "treeMs": 4731,
+        "noteMs": 4731,
+        "startupMs": 4731,
+        "memoryMB": 305.1,
+        "processesMB": {
+          "main": 30.2,
+          "gpu": 46.7,
+          "network": 7,
+          "java": 156.8,
+          "renderer": 63.6,
+          "conhost": 0.8
+        },
+        "processCount": 6,
+        "backend": {
+          "springSec": 2.703,
+          "jvmSec": 3.489
+        }
+      }
+    ],
+    "warmup": {
+      "startupMs": 5604,
+      "memoryMB": 301.6
+    },
+    "bigVault": {
+      "notes": 5000,
+      "sizeMB": 39.4,
+      "startupMs": 5334,
+      "windowMs": 4101,
+      "treeMs": 5334,
+      "noteMs": 5334,
+      "memoryMB": 452.2,
+      "processesMB": {
+        "main": 28,
+        "gpu": 48.5,
+        "network": 7,
+        "java": 291.1,
+        "renderer": 76.8,
+        "conhost": 0.8
+      },
+      "rounds": [
+        {
+          "windowMs": 4069,
+          "treeMs": 5468,
+          "noteMs": 5468,
+          "startupMs": 5468,
+          "memoryMB": 411.8,
+          "processesMB": {
+            "main": 27.7,
+            "gpu": 46.1,
+            "network": 7.1,
+            "java": 258.5,
+            "renderer": 71.6,
+            "conhost": 0.8
+          },
+          "processCount": 6,
+          "backend": {
+            "springSec": 2.581,
+            "jvmSec": 3.415
+          }
+        },
+        {
+          "windowMs": 4101,
+          "treeMs": 5334,
+          "noteMs": 5334,
+          "startupMs": 5334,
+          "memoryMB": 452.2,
+          "processesMB": {
+            "main": 28,
+            "gpu": 48.5,
+            "network": 7,
+            "java": 291.1,
+            "renderer": 76.8,
+            "conhost": 0.8
+          },
+          "processCount": 6,
+          "backend": {
+            "springSec": 2.71,
+            "jvmSec": 3.492
+          }
+        },
+        {
+          "windowMs": 4107,
+          "treeMs": 5296,
+          "noteMs": 5296,
+          "startupMs": 5296,
+          "memoryMB": 455.4,
+          "processesMB": {
+            "main": 30.2,
+            "gpu": 48.5,
+            "network": 6.9,
+            "java": 290.1,
+            "renderer": 78.9,
+            "conhost": 0.8
+          },
+          "processCount": 6,
+          "backend": {
+            "springSec": 2.672,
+            "jvmSec": 3.483
+          }
+        }
+      ]
+    }
+  }
+}

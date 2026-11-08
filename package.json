@@ -17,6 +17,8 @@
     "test:electron": "node --test \"electron/*.test.js\"",
     "test:packaged": "node --test scripts/packaged-backend.test.js",
     "test:coverage": "cd backend && mvn verify",
+    "test:perf": "node --test scripts/perf-measure.test.js",
+    "perf:measure": "node scripts/perf-measure.js",
     "build:frontend": "cd frontend && npm run build",
     "build:backend": "cd backend && mvn -DskipTests package && node ../scripts/copy-backend-jar.js",
     "build": "npm run build:backend && npm run build:frontend",
