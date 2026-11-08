@@ -95,3 +95,22 @@ Blocked by: 01
 - `main.js` 接入：合并时做，见上。
 - `perf:measure` 的改动前后数字、spec「实验」表的正式补数：父会话串行测量。
 - 观察到但没动：`classes_nocoops.jsa` 只在关掉压缩指针时（堆 ≥ 32GB）才用得上，`-Xmx512m` 下永远用不到；删掉能省 12.5MB 磁盘空间、安装包约 2.3MB。删了以后 JRE 和堆上限就绑在一起了，工单里也没说要删，交给 V105-05 决定。
+
+### 接入 main.js 和 perf 数字（父会话，2026-11-08）
+
+V105-02、03 和本票按顺序 cherry-pick 到 main（`4ae884b`、`ba90639`、`c0f15cb`），然后 `170b2f0` 把 `buildBackendArgs` 接进了 `main.js` 的 `startBackend`，后端重启也走同一条路。
+
+- 红：`main.test.js` 新增的用例看到的 spawn 参数是 `['-jar', <jar>]`，不是五个 JVM 参数后接 `-jar`。绿：`test:electron` 42/42。
+- `npm run dist:verify -- --expect-version 1.0.4`（main 上，02、03、04 全部合入）：Electron 42/42，后端 138/138，前端 243/243，build，`prepare:resources`（jlink 输出 `Created CDS archive successfully`，`test:packaged` 14/14），资源校验通过。
+- `electron-builder --win dir` 之后核实过：`app.asar` 里的 `main.js` 有 `buildBackendArgs`，没有启动画面；JRE 里有 `classes.jsa`；`backend.jar` 是 26.0MB。
+
+perf（`perf-measure.js --no-record`，暖缓存 1 轮 + 3 轮取中位数，机器上没有别的任务）：
+
+| | 主窗口创建 | 启动时间 | 内存占用 | Java 后端 | JVM 启动到 Spring 就绪 |
+| --- | --- | --- | --- | --- | --- |
+| 1.0.4 基线 | 约 4.1 秒 | 4.76 秒 | 305.6MB | 158.5MB | 3.5 秒 |
+| 本票分支，参数还没接入（`c3ff7f2`） | 3.84 秒 | 4.52 秒（−5.0%） | 300.8MB（−1.6%） | 155.6MB | 3.28 秒 |
+| main，02+03+04 加接入（`170b2f0`） | 0.24 秒 | **3.28 秒（−31.1%）** | **242.2MB（−20.7%）** | **102.9MB** | 2.60 秒 |
+
+- **内存占用已经低于 250MB 的目标。** Java 后端少掉的约 56MB 几乎都来自精简参数，和本票会话的参考测量一致（只加基础类缓存约 154MB，加精简参数约 100MB）。
+- 启动时间离 2.0 秒还差 1.3 秒左右，几乎全在后端（JVM 启动到 Spring 就绪要 2.60 秒）。剩下的要靠 V105-05 的应用类缓存，grilling 时的实验是后端约 1.1 秒。
