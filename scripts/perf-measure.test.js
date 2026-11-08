@@ -8,6 +8,7 @@ const {
   summarizeRounds,
   classifyProcess,
   descendantsOf,
+  porcelainPaths,
 } = require('./perf-measure');
 
 // 这一组只测纯函数。真正去启动打包版的部分没法放进单元测试，见 npm run perf:measure。
@@ -138,4 +139,17 @@ test('process tree includes the root and every descendant, nothing else', () => 
 
   assert.deepEqual(descendantsOf(10, processes).map((p) => p.ProcessId).sort(), [10, 11, 12, 13]);
   assert.deepEqual(descendantsOf(99, processes), []);
+});
+
+// 1.0.5 发布时 results.json 记下的是 'ackage.json'：git() 把整段输出 trim 掉，第一行
+// ' M package.json' 开头的空格没了，再按固定 3 个字符切就多切掉一个字母
+test('porcelainPaths keeps the whole path, also on the first line whose leading space was trimmed', () => {
+  assert.deepEqual(porcelainPaths('M package.json\n M scripts/x.js\n?? new file.md\nMM electron/main.js'), [
+    'package.json',
+    'scripts/x.js',
+    'new file.md',
+    'electron/main.js',
+  ]);
+  assert.deepEqual(porcelainPaths(''), []);
+  assert.deepEqual(porcelainPaths(null), []);
 });

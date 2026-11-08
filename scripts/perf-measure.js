@@ -656,11 +656,19 @@ function git(args) {
   }
 }
 
+/**
+ * `git status --porcelain` 的输出 → 路径列表。按状态码的样式去掉前缀，不按固定 3 个字符切：
+ * git() 会 trim 整段输出，第一行 ' M x' 开头的空格已经没了（1.0.5 发布时因此记成了 'ackage.json'）。
+ */
+function porcelainPaths(status) {
+  return status ? status.split(/\r?\n/).filter(Boolean).map((line) => line.replace(/^\s*\S{1,2}\s+/, '')) : [];
+}
+
 function buildInfo(fileVersion) {
   const status = git(['status', '--porcelain', '--', ...BUILD_INPUTS]);
   return {
     commit: git(['log', '-1', '--format=%h', '--', ...BUILD_INPUTS]),
-    uncommittedBuildInputs: status ? status.split(/\r?\n/).filter(Boolean).map((line) => line.slice(3)) : [],
+    uncommittedBuildInputs: porcelainPaths(status),
     exe: path.relative(projectRoot, EXE_PATH).replace(/\\/g, '/'),
     fileVersion,
   };
@@ -844,6 +852,7 @@ module.exports = {
   summarizeRounds,
   classifyProcess,
   descendantsOf,
+  porcelainPaths,
 };
 
 if (require.main === module) {
