@@ -1693,4 +1693,153 @@ describe('App (integration with mocked backend)', () => {
       expect(menuShown()).toBe(false);
     }, 20000);
   });
+
+  // V105-02：主窗口和后端同时启动，界面画好就显示。主进程等后端健康检查通过，才让 getBackendConfig
+  // （这里是 initApiConfig）返回；在那之前，窗口已经显示，文件树区域先显示「正在打开工作区…」
+  describe('V105-02: the window shows before the backend is ready', () => {
+    const OPENING = '正在打开工作区…';
+
+    beforeEach(() => {
+      vi.mocked(api.getWorkspace).mockClear();
+      vi.mocked(api.getTree).mockClear();
+      vi.mocked(api.healthCheck).mockClear();
+      // 上一个用例留下的主题不能让这里的断言碰巧成立
+      delete document.documentElement.dataset.theme;
+      delete document.documentElement.dataset.themeId;
+    });
+
+    /** 后端还没就绪：initApiConfig 挂起，直到调用返回的函数。不调用就一直挂着（不能在用例结束后再放行，否则后续步骤会落到下一个用例里） */
+    function holdBackend(): () => Promise<void> {
+      let release: () => void = () => undefined;
+      vi.mocked(api.initApiConfig).mockImplementationOnce(() => new Promise((resolve) => {
+        release = () => resolve({ port: 0, token: '' });
+      }));
+      return () => act(async () => release());
+    }
+
+    function saveSettings(settings: Record<string, unknown>) {
+      localStorage.setItem('nexttyproa-app-settings', JSON.stringify(settings));
+    }
+
+    const restoredTab = (path: string) => ({ openTabs: [{ id: path, path, title: path }], activeTabPath: path });
+
+    async function settle(ms = 300) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    }
+
+    it('shows 正在打开工作区… in the file tree area, then the tree and the restored note once the backend is ready', async () => {
+      disk.set('a.md', '# A\n\n恢复的笔记\n');
+      saveSettings({ lastWorkspace: MAIN_VAULT, ...restoredTab('a.md') });
+      const releaseBackend = holdBackend();
+
+      render(<App />);
+
+      expect(await screen.findByText(OPENING, undefined, { timeout: 5000 })).toBeTruthy();
+      // 窗口其余部分已经画好，标题栏的按钮能用
+      expect(screen.getByLabelText('关闭窗口')).toBeTruthy();
+      expect(api.getWorkspace).not.toHaveBeenCalled();
+
+      await releaseBackend();
+
+      await waitFor(() => expect(editorText()).toContain('恢复的笔记'), { timeout: 10000 });
+      expect(within(screen.getByLabelText('文件树根目录')).getAllByText('a.md').length).toBeGreaterThan(0);
+      expect(screen.queryByText(OPENING)).toBeNull();
+    }, 20000);
+
+    it('shows the usual empty state instead when there is no last workspace', async () => {
+      saveSettings({});
+      holdBackend();
+
+      render(<App />);
+
+      expect(await screen.findByText('暂无文件', undefined, { timeout: 5000 })).toBeTruthy();
+      expect(screen.queryByText(OPENING)).toBeNull();
+    }, 20000);
+
+    it('applies the theme from the preferences before the backend is ready', async () => {
+      saveSettings({ lastWorkspace: MAIN_VAULT, themeId: 'default-dark', editorThemeId: 'default-dark' });
+      holdBackend();
+
+      render(<App />);
+
+      await waitFor(() => expect(document.documentElement.dataset.themeId).toBe('default-dark'), { timeout: 5000 });
+      expect(document.documentElement.dataset.theme).toBe('dark');
+      expect(api.getWorkspace).not.toHaveBeenCalled();
+    }, 20000);
+
+    // 「还没连上」和「连上后又断了」是两种状态：等后端的这段时间里，心跳探测失败也不能显示断线横幅
+    it('does not show the disconnected banner while waiting for the backend', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      vi.mocked(api.healthCheck).mockResolvedValue(false);
+      vi.mocked(api.reconnectBackend).mockResolvedValue(false);
+      try {
+        saveSettings({ lastWorkspace: MAIN_VAULT });
+        holdBackend();
+
+        render(<App />);
+        expect(await screen.findByText(OPENING, undefined, { timeout: 5000 })).toBeTruthy();
+        // 心跳在线时 5 秒一次、断线后 3 秒一次；这里走过 20 秒
+        for (let i = 0; i < 8; i += 1) {
+          await act(async () => {
+            vi.advanceTimersByTime(2500);
+          });
+          await settle(20);
+        }
+
+        expect(document.querySelector('.backend-offline-banner')).toBeNull();
+        expect(screen.getByText(OPENING)).toBeTruthy();
+      } finally {
+        vi.useRealTimers();
+        vi.mocked(api.healthCheck).mockImplementation(async () => true);
+        vi.mocked(api.reconnectBackend).mockImplementation(async () => true);
+      }
+    }, 20000);
+
+    // 双击 .md 启动、或者第二个实例转发过来的文件，可能在后端就绪之前到达：先排队，就绪后再打开
+    it('opens a note the OS asked to open while the backend was starting, once it is ready', async () => {
+      let openFilePath: ((filePath: string) => void) | undefined;
+      stubElectron({
+        onOpenFilePath: (callback) => {
+          openFilePath = callback;
+          return () => undefined;
+        },
+      });
+      disk.set('a.md', '# A\n\n恢复的笔记\n');
+      disk.set('日记/双击.md', '# 双击\n\n双击打开的笔记\n');
+      saveSettings({ lastWorkspace: MAIN_VAULT, ...restoredTab('a.md') });
+      const releaseBackend = holdBackend();
+
+      render(<App />);
+      await waitFor(() => expect(openFilePath).toBeDefined(), { timeout: 5000 });
+      await act(async () => openFilePath!('D:\\vault\\日记\\双击.md'));
+      await settle();
+
+      // 后端还没就绪，不能调用 API
+      expect(api.getNote).not.toHaveBeenCalled();
+      expect(api.setWorkspace).not.toHaveBeenCalled();
+      expect(api.getWorkspace).not.toHaveBeenCalled();
+
+      await releaseBackend();
+
+      await waitFor(() => expect(editorText()).toContain('双击打开的笔记'), { timeout: 10000 });
+      await waitFor(() => expect(tabPaths()).toEqual(['a.md', '日记/双击.md']), { timeout: 5000 });
+      expect(api.setWorkspace).not.toHaveBeenCalledWith('D:\\vault\\日记');
+    }, 20000);
+
+    // 原来渲染进程自己另做 30 次 × 500ms 的健康检查，比主进程的 60 秒短：冷启动慢时会先报「无法连接后端服务」。
+    // 现在超时只有主进程一个来源，getBackendConfig 返回就说明后端已经就绪
+    it('opens the workspace as soon as the main process hands over the backend config, without a health-check timeout of its own', async () => {
+      vi.mocked(api.healthCheck).mockResolvedValue(false);
+      try {
+        await openApp({ 'a.md': '# A\n\n正文\n' }, ['a.md'], 'a.md', { lastWorkspace: MAIN_VAULT });
+
+        expect(editorText()).toContain('正文');
+        expect(screen.queryByText(/无法连接后端服务/)).toBeNull();
+      } finally {
+        vi.mocked(api.healthCheck).mockImplementation(async () => true);
+      }
+    }, 20000);
+  });
 });

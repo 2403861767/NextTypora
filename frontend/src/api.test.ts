@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { BackendConfig } from './types';
 import { ApiError, deleteNote, deletePath, describeError, exportHtml, getNote, movePath, refreshWorkspace, scanLegacyBackups, searchNotes } from './api';
 
 function jsonResponse(body: unknown) {
@@ -299,5 +300,57 @@ describe('backend connection', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))));
 
     await expect(api.getWorkspace()).rejects.toMatchObject({ kind: 'network', status: 0 });
+  });
+
+  /** getBackendConfig 挂起，直到测试给出配置：主进程要等后端健康检查通过才交出端口和令牌 */
+  function pendingBackendConfig() {
+    const pending: { resolve: (config: BackendConfig) => void } = { resolve: () => undefined };
+    const getBackendConfig = vi.fn(() => new Promise<BackendConfig>((resolve) => {
+      pending.resolve = resolve;
+    }));
+    window.nextTyproa = { getBackendConfig } as unknown as NonNullable<Window['nextTyproa']>;
+    return pending;
+  }
+
+  // V105-02：窗口比后端先显示，界面可能在后端就绪之前就发请求（比如用户马上点了「打开文件夹」）。
+  // 这些请求要等主进程交出端口和令牌，而不是打到默认端口上失败
+  it('V105-02: requests made while the backend is starting wait for its port and token', async () => {
+    const api = await freshApi();
+    const backend = pendingBackendConfig();
+    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => jsonResponse({ path: 'D:/vault' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ready = api.initApiConfig();
+    const workspace = api.getWorkspace();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    backend.resolve({ port: 43210, token: 'startup-token' });
+    await expect(ready).resolves.toEqual({ port: 43210, token: 'startup-token' });
+    await expect(workspace).resolves.toEqual({ path: 'D:/vault' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:43210/api/workspace');
+    expect((fetchMock.mock.calls[0][1]?.headers as Record<string, string>)['X-Auth-Token']).toBe('startup-token');
+  });
+
+  // 只有启动时的那一次挡住请求：之后断线重连（后端重启中）时请求照旧立即失败，由心跳和断线横幅处理
+  it('V105-02: a reconnect that waits for a restarting backend does not hold other requests', async () => {
+    const api = await freshApi();
+    const startup = pendingBackendConfig();
+    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => jsonResponse({ path: 'D:/vault' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const ready = api.initApiConfig();
+    startup.resolve({ port: 43210, token: 'startup-token' });
+    await ready;
+
+    const restarting = pendingBackendConfig();
+    const reconnect = api.reconnectBackend();
+    await api.getWorkspace();
+
+    expect(fetchMock).toHaveBeenLastCalledWith('http://127.0.0.1:43210/api/workspace', expect.any(Object));
+    restarting.resolve({ port: 43211, token: 'rotated-token' });
+    await expect(reconnect).resolves.toBe(true);
+    expect(fetchMock).toHaveBeenLastCalledWith('http://127.0.0.1:43211/api/health', expect.any(Object));
   });
 });

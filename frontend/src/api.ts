@@ -16,11 +16,23 @@ let config: BackendConfig = {
   token: import.meta.env.VITE_AUTH_TOKEN || '',
 };
 
-export async function initApiConfig(): Promise<BackendConfig> {
-  if (window.nextTyproa?.getBackendConfig) {
-    config = await window.nextTyproa.getBackendConfig();
+// 启动时主进程等后端健康检查通过才交出端口和令牌，而窗口比后端先显示：界面在这之前发出的请求
+// （比如用户马上点了「打开文件夹」）先等它，而不是打到默认端口上失败。
+// 只有启动时的这一次挡住请求；之后断线重连时请求照旧立即失败，交给心跳和断线横幅处理
+let startupConfig: Promise<unknown> | null = null;
+
+/** Electron 下等主进程报告后端就绪（失败时 reject）；开发时在浏览器里直接用环境变量中的配置 */
+export function initApiConfig(): Promise<BackendConfig> {
+  const getBackendConfig = window.nextTyproa?.getBackendConfig;
+  if (!getBackendConfig) {
+    return Promise.resolve(config);
   }
-  return config;
+  const next = getBackendConfig().then((received) => {
+    config = received;
+    return received;
+  });
+  startupConfig ??= next.catch(() => undefined);
+  return next;
 }
 
 function baseUrl(): string {
@@ -75,6 +87,9 @@ export function describeError(error: unknown, fallback: string): string {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  if (startupConfig) {
+    await startupConfig;
+  }
   let response: Response;
   try {
     response = await fetch(`${baseUrl()}${path}`, {

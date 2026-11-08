@@ -26,7 +26,6 @@ import {
   Input,
   Modal,
   Segmented,
-  Spin,
   Typography,
   message,
   theme as antTheme,
@@ -377,7 +376,12 @@ function replaceAffectedPath(path: string, target: TreeSelection, newTargetPath:
 }
 
 export default function App() {
+  // ready：后端已就绪，工作区和上次的笔记已恢复。在那之前窗口已经显示（主进程不等后端），界面照常画出来
   const [ready, setReady] = useState(false);
+  // 启动时设置里的上次工作区：undefined 表示还没读到设置，'' 表示没有。ready 之前据此决定文件树区域显示什么
+  const [startupWorkspace, setStartupWorkspace] = useState<string>();
+  // 后端就绪之前收到的打开文件请求（双击 .md、第二个实例转发）还没打开完
+  const [openingRequestedNote, setOpeningRequestedNote] = useState(false);
   const [error, setError] = useState('');
   const [workspacePath, setWorkspacePath] = useState('');
   const [tree, setTree] = useState<TreeNode[]>([]);
@@ -1020,20 +1024,7 @@ export default function App() {
 
   const bootstrap = useCallback(async () => {
     setError('');
-    await initApiConfig();
-
-    let healthy = false;
-    for (let i = 0; i < 30; i++) {
-      healthy = await healthCheck();
-      if (healthy) break;
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    if (!healthy) {
-      setError('无法连接后端服务，请确认 Spring Boot 已启动。');
-      return;
-    }
-
+    // 偏好设置走 IPC，不经过后端：先应用，窗口提前显示时不会先闪一下默认主题
     const settings = await loadAndApplyPreferenceSettings();
     setImageSettings(settings);
     setSpellCheckEnabled(settings.spellCheckEnabled);
@@ -1045,6 +1036,10 @@ export default function App() {
     setRecentFiles(settings.recentFiles);
     setRecentWorkspaces(settings.recentWorkspaces);
     setWritingModes(settings.writingModes);
+    setStartupWorkspace(settings.lastWorkspace ?? '');
+
+    // 主进程等后端健康检查通过才返回；超时（60 秒）和失败（错误框后退出）都由主进程处理，这里不另设超时
+    await initApiConfig();
 
     const ws = await getWorkspace();
     let wsPath = ws.path;
@@ -1120,6 +1115,8 @@ export default function App() {
         await openNoteAt(dir, relativePath);
       } catch (e) {
         showError(describeError(e, '打开文件失败'));
+      } finally {
+        setOpeningRequestedNote(false);
       }
     })();
   }, [ready, openNoteAt, showError]);
@@ -1246,8 +1243,10 @@ export default function App() {
   }, [openNoteAt, showError]);
 
   const handleOpenAbsoluteFile = useCallback(async (fullPath: string) => {
+    // 后端还没就绪：排队，就绪后由上面的 effect 打开，不能直接调用 API
     if (!ready) {
       pendingOpenPathRef.current = fullPath;
+      setOpeningRequestedNote(true);
       return;
     }
     try {
@@ -2055,21 +2054,11 @@ export default function App() {
     );
   }
 
-  if (!ready) {
-    return (
-      <ConfigProvider theme={antdThemeConfig}>
-        <MotionConfig reducedMotion="user" transition={motionTransitions.standard}>
-          <motion.div className="app-center-state app-entry-state" {...fadeSoftMotion}>
-          <motion.div className="app-entry-card" {...sheetRevealMotion}>
-            <span className="app-entry-mark" aria-hidden="true">N</span>
-            <Spin size="large" className="app-entry-spinner" />
-            <Text className="app-entry-message">正在连接后端...</Text>
-          </motion.div>
-          </motion.div>
-        </MotionConfig>
-      </ConfigProvider>
-    );
-  }
+  // 启动时后端就绪之前：有上次的工作区（或还没读到设置）时文件树区域显示「正在打开工作区…」，没有就照常显示空状态
+  const workspaceOpening = !ready && startupWorkspace !== '';
+  // 编辑区同样先留空，等恢复的笔记或排队要打开的笔记读好再一次画出来：不闪「打开本地 Markdown 文件」，
+  // 也不先挂上一篇马上要换掉的笔记（它的编辑器晚到的 onReady 会把旧正文写进新笔记的状态）
+  const editorAreaPending = workspaceOpening || openingRequestedNote;
 
   return (
     <ConfigProvider theme={antdThemeConfig}>
@@ -2337,7 +2326,11 @@ export default function App() {
             onCreateMarkdown={() => { void handleCreateMarkdown(''); }}
             onCreateFolder={() => { void handleCreateFolder(''); }}
             onRefresh={() => { void refreshWorkspaceTree(); }}
-            filesContent={
+            filesContent={workspaceOpening ? (
+              <div className="sidebar-empty" role="status">
+                {startupWorkspace ? <p>正在打开工作区…</p> : null}
+              </div>
+            ) : (
               <FileTree
                 nodes={tree}
                 selectedTreeItem={selectedTreeItem}
@@ -2361,7 +2354,7 @@ export default function App() {
                 onMove={(source, targetFolderPath) => { void handleMoveRequest(source, targetFolderPath); }}
                 onMoveRequest={handleMoveToRequest}
               />
-            }
+            )}
             fileListContent={
               <FileList
                 nodes={tree}
@@ -2405,6 +2398,7 @@ export default function App() {
           />
 
           <main className="typora-main">
+            {!editorAreaPending && (
             <EditorTabs
               tabs={openTabs}
               activePath={activeTabPath || selectedPath}
@@ -2416,6 +2410,8 @@ export default function App() {
               onCloseRight={(path) => { void handleCloseRightTabs(path); }}
               onCopyPath={(path) => { void copyText(path, '已复制标签路径'); }}
             />
+            )}
+            {!editorAreaPending && (
             <AnimatePresence mode="wait" initial={false}>
             {selectedPath ? (
               <motion.div key="editor-open" className="typora-editor-state" {...fadeSoftMotion}>
@@ -2504,6 +2500,7 @@ export default function App() {
               </motion.div>
             )}
             </AnimatePresence>
+            )}
           </main>
         </div>
 

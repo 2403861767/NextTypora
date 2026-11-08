@@ -24,9 +24,11 @@ app.setName('NextTyproa');
 
 const isDev = !app.isPackaged;
 let mainWindow = null;
-let splashWindow = null;
 let backendProcess = null;
 let backendConfig = { port: 8080, token: '' };
+// 后端启动并通过健康检查后 resolve 成 { port, token }，失败时 reject；backend:getConfig 交给渲染进程的就是它。
+// 重启时换成新的 promise，所以之后（以及重启进行中）读到的是新端口和新令牌
+let backendReady = null;
 let pendingOpenFile = null;
 let pageReady = false;
 let quitting = false;
@@ -46,8 +48,6 @@ if (!gotLock) {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
-    } else if (splashWindow) {
-      splashWindow.focus();
     }
     const filePath = extractMarkdownFromArgs(argv);
     if (filePath) {
@@ -119,134 +119,23 @@ function resolveAppIcon() {
   return fs.existsSync(iconPath) ? iconPath : undefined;
 }
 
-function createSplashWindow() {
-  splashWindow = new BrowserWindow({
-    width: 520,
-    height: 300,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    icon: resolveAppIcon(),
-    resizable: false,
-    center: true,
-    alwaysOnTop: true,
-    show: true,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  });
-
-  const html = `
-    <!doctype html>
-    <html><head><meta charset="utf-8"><style>
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        height: 100vh;
-        display: grid;
-        place-items: center;
-        background: transparent;
-        color: #1f2329;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
-        overflow: hidden;
-      }
-      .splash {
-        width: 460px;
-        height: 236px;
-        position: relative;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        padding: 22px 24px;
-        border: 1px solid rgba(159, 174, 194, 0.28);
-        border-radius: 22px;
-        background:
-          radial-gradient(circle at 18% 4%, rgba(10, 132, 255, 0.14), transparent 36%),
-          linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(239, 244, 250, 0.96));
-        box-shadow: 0 28px 70px rgba(56, 72, 92, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.82);
-      }
-      .traffic { display: flex; gap: 8px; }
-      .traffic span {
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
-      }
-      .red { background: #ff5f57; }
-      .yellow { background: #febc2e; }
-      .green { background: #28c840; }
-      .brand { display: grid; gap: 10px; justify-items: center; }
-      .mark {
-        width: 42px;
-        height: 42px;
-        display: grid;
-        place-items: center;
-        border-radius: 12px;
-        background: linear-gradient(145deg, #5fb2ff, #0a84ff);
-        color: #fff;
-        font-size: 24px;
-        font-weight: 800;
-        box-shadow: 0 12px 26px rgba(10, 132, 255, 0.26);
-      }
-      h1 {
-        margin: 0;
-        font-size: 30px;
-        font-weight: 760;
-        letter-spacing: 0;
-      }
-      p {
-        margin: 0;
-        color: #687486;
-        font-size: 14px;
-      }
-      .bar {
-        height: 5px;
-        overflow: hidden;
-        border-radius: 999px;
-        background: rgba(135, 154, 178, 0.22);
-      }
-      .bar::before {
-        content: '';
-        display: block;
-        width: 42%;
-        height: 100%;
-        border-radius: inherit;
-        background: linear-gradient(90deg, #0a84ff, #b8ddff);
-        animation: loading 1.15s ease-in-out infinite alternate;
-      }
-      @keyframes loading {
-        from { transform: translateX(-8%); }
-        to { transform: translateX(150%); }
-      }
-    </style></head>
-    <body>
-      <section class="splash">
-        <div class="traffic"><span class="red"></span><span class="yellow"></span><span class="green"></span></div>
-        <div class="brand">
-          <div class="mark">N</div>
-          <h1>NextTypora</h1>
-          <p>正在准备你的写作空间...</p>
-        </div>
-        <div class="bar"></div>
-      </section>
-    </body></html>
-  `;
-  splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-}
-
-function closeSplashWindow() {
-  if (splashWindow && !splashWindow.isDestroyed()) {
-    splashWindow.close();
-  }
-  splashWindow = null;
-}
-
-// 启动失败统一出口：关闭 splash、提示错误并直接退出（置 quitting，避免 before-quit 等待未加载的渲染进程保存）
+// 启动失败统一出口：提示错误并直接退出（置 quitting，避免 before-quit 等待渲染进程保存）。
+// 主窗口不等后端就显示，失败时它可能已经在屏幕上：这时错误框以它为父窗口，不会被挡在它后面
+// （窗口最小化了就先还原，否则错误框跟着它一起藏起来）。
+// 对话框的样子和 dialog.showErrorBox 一样（标题栏 Error，正文是标题加错误信息）
 function failStartup(message) {
   if (quitting) return;
-  closeSplashWindow();
-  dialog.showErrorBox('NextTypora 启动失败', message);
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    dialog.showMessageBoxSync(mainWindow, {
+      type: 'error',
+      title: 'Error',
+      message: 'NextTypora 启动失败',
+      detail: message,
+    });
+  } else {
+    dialog.showErrorBox('NextTypora 启动失败', message);
+  }
   finishQuit();
 }
 
@@ -475,14 +364,16 @@ function createWindow() {
     },
   });
 
-  // 渲染进程崩溃或卡住时 ready-to-show 永远不会触发，splash 会一直停留
+  // 渲染进程崩溃或卡住时 ready-to-show 永远不会触发，窗口一直不显示
   const readyTimer = setTimeout(() => {
     failStartup(`界面加载超时（${WINDOW_READY_TIMEOUT_MS / 1000}秒），请重试。`);
   }, WINDOW_READY_TIMEOUT_MS);
 
+  // 界面画好就显示，不等后端：后端没就绪时渲染进程在文件树区域显示「正在打开工作区…」。
+  // 启动已经失败、正在退出时不再显示（错误框关掉之后这个事件才可能轮到）
   mainWindow.once('ready-to-show', () => {
     clearTimeout(readyTimer);
-    closeSplashWindow();
+    if (quitting) return;
     mainWindow.show();
     mainWindow.focus();
   });
@@ -524,7 +415,20 @@ function createWindow() {
   }
 }
 
-ipcMain.handle('backend:getConfig', () => backendConfig);
+// 启动后端并等健康检查通过。超时只有一个来源：startBackend 的 60 秒，渲染进程不另设更短的超时
+function launchBackend() {
+  backendReady = (async () => {
+    await startBackend();
+    if (!(await waitForHealth(backendConfig.port))) {
+      throw new Error('后端健康检查失败，请稍后重试。');
+    }
+    return { port: backendConfig.port, token: backendConfig.token };
+  })();
+  return backendReady;
+}
+
+// 渲染进程启动时就来要配置，这时后端多半还没就绪：拿到的 promise 在后端就绪时 resolve，启动失败时 reject
+ipcMain.handle('backend:getConfig', () => backendReady);
 
 // 渲染进程检测到后端断线后可请求重启：新进程使用新的端口和令牌，渲染进程随后通过 backend:getConfig 重新读取
 let backendRestart = null;
@@ -540,10 +444,7 @@ async function restartBackend() {
   if (previous && previous.exitCode === null && !previous.killed) {
     previous.kill();
   }
-  await startBackend();
-  if (!(await waitForHealth(backendConfig.port))) {
-    throw new Error('后端健康检查失败，请稍后重试。');
-  }
+  await launchBackend();
   return { ok: true };
 }
 
@@ -840,16 +741,13 @@ ipcMain.handle('export:pdf', async (_event, payload) => {
 });
 
 if (gotLock) {
+  // 后端和主窗口同时启动：后端（JVM + Spring）是最慢的一环，先让它起跑，渲染进程加载界面的时间被它盖住
   app.whenReady().then(async () => {
-    createSplashWindow();
     removeApplicationMenu();
+    const ready = launchBackend();
+    createWindow();
     try {
-      await startBackend();
-      const healthy = await waitForHealth(backendConfig.port);
-      if (!healthy) {
-        throw new Error('后端健康检查失败，请稍后重试。');
-      }
-      createWindow();
+      await ready;
     } catch (err) {
       failStartup(err.message || String(err));
     }

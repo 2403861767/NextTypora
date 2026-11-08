@@ -201,14 +201,6 @@ textarea:focus-visible,
   box-shadow: 0 12px 26px rgba(10, 132, 255, 0.26);
 }
 
-.app-entry-spinner {
-  margin-top: 2px;
-}
-
-.app-entry-spinner .ant-spin-dot-item {
-  background-color: #0a84ff;
-}
-
 .app-entry-message {
   color: #617083;
   font-size: 15px;

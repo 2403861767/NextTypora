@@ -27,6 +27,8 @@ function createFakeElectron() {
     hasQuit: false,
     messageBoxes: [],
     messageBoxResponse: 0,
+    // 错误对话框（dialog.showErrorBox，或 type 为 error 的消息框）：parent 是它的父窗口，没有父窗口时为 null
+    errorDialogs: [],
     // shell.trashItem 收到的路径（系统回收站的替身）
     trashed: [],
     trashError: null,
@@ -63,6 +65,7 @@ function createFakeElectron() {
       super();
       this.options = options;
       this.destroyed = false;
+      this.visible = options.show !== false;
       // 渲染进程（App.tsx）的替身，由测试设置
       this.renderer = null;
       this.webContents = new EventEmitter();
@@ -82,7 +85,21 @@ function createFakeElectron() {
       return Promise.resolve();
     }
 
-    show() {}
+    show() {
+      this.visible = true;
+    }
+
+    hide() {
+      this.visible = false;
+    }
+
+    isVisible() {
+      return this.visible && !this.destroyed;
+    }
+
+    isMinimized() {
+      return false;
+    }
 
     focus() {}
 
@@ -123,12 +140,22 @@ function createFakeElectron() {
       handle: (channel, handler) => ipcHandlers.set(channel, handler),
     },
     dialog: {
-      showErrorBox: () => undefined,
-      showMessageBox: async (_window, options) => {
+      showErrorBox: (title, content) => {
+        state.errorDialogs.push({ parent: null, text: `${title}\n${content}` });
+      },
+      showMessageBox: async (window, options) => {
+        if (options.type === 'error') {
+          state.errorDialogs.push({ parent: window ?? null, text: `${options.message}\n${options.detail ?? ''}` });
+          return { response: 0 };
+        }
         state.messageBoxes.push(options);
         return { response: state.messageBoxResponse };
       },
-      showMessageBoxSync: (_window, options) => {
+      showMessageBoxSync: (window, options) => {
+        if (options.type === 'error') {
+          state.errorDialogs.push({ parent: window ?? null, text: `${options.message}\n${options.detail ?? ''}` });
+          return 0;
+        }
         state.messageBoxes.push(options);
         return state.messageBoxResponse;
       },
@@ -430,4 +457,202 @@ test('V103-19: the file association ProgId is app-specific and installer.nsh agr
     nsh.includes(`${association.name}_backup`),
     `build/installer.nsh must clean up ${association.name}_backup`,
   );
+});
+
+/**
+ * 按打包版启动 main.js：后端是一个假的 java 进程（child_process.spawn 的替身），由测试决定它什么时候
+ * 打出端口、什么时候退出。backend.jar 放在临时的 resources 目录里，withJar=false 模拟 jar 不见了。
+ * 不等主窗口：主窗口什么时候创建正是这里要测的。
+ */
+async function bootPackaged(t, { withJar = true } = {}) {
+  const fake = createFakeElectron();
+  fake.electron.app.isPackaged = true;
+  const resources = fs.mkdtempSync(path.join(os.tmpdir(), 'nexttyproa-resources-'));
+  const jarPath = path.join(resources, 'backend.jar');
+  if (withJar) fs.writeFileSync(jarPath, '');
+
+  const backends = [];
+  const realChildProcess = require('child_process');
+  const fakeChildProcess = {
+    ...realChildProcess,
+    spawn(command, args, options) {
+      const child = new EventEmitter();
+      Object.assign(child, {
+        command,
+        args,
+        env: options?.env ?? {},
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        exitCode: null,
+        killed: false,
+        print(line) {
+          child.stdout.emit('data', Buffer.from(`${line}\n`));
+        },
+        exit(code) {
+          if (child.exited) return;
+          child.exited = true;
+          child.exitCode = code;
+          child.emit('exit', code);
+        },
+        kill() {
+          child.killed = true;
+          child.exit(null);
+          return true;
+        },
+      });
+      backends.push(child);
+      return child;
+    },
+  };
+
+  const originalLoad = Module._load;
+  const originalFetch = globalThis.fetch;
+  const hadResourcesPath = Object.prototype.hasOwnProperty.call(process, 'resourcesPath');
+  const originalResourcesPath = process.resourcesPath;
+  process.resourcesPath = resources;
+  const healthRequests = [];
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/api/health')) healthRequests.push(String(url));
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  t.after(() => {
+    // 还在启动的假后端退出，清掉 main.js 里 60 秒的启动超时；没关掉的窗口会留下界面加载超时的定时器
+    for (const child of backends) child.exit(1);
+    for (const win of [...fake.windows]) win.destroy();
+    globalThis.fetch = originalFetch;
+    if (hadResourcesPath) process.resourcesPath = originalResourcesPath;
+    else delete process.resourcesPath;
+    if (withJar) fs.unlinkSync(jarPath);
+    fs.rmdirSync(resources);
+    delete require.cache[MAIN_PATH];
+  });
+
+  delete require.cache[MAIN_PATH];
+  Module._load = function load(request, ...rest) {
+    if (request === 'electron') return fake.electron;
+    if (request === 'child_process') return fakeChildProcess;
+    return originalLoad.call(this, request, ...rest);
+  };
+  try {
+    require('./main');
+  } finally {
+    Module._load = originalLoad;
+  }
+  await settle();
+
+  const mainWindow = () => fake.windows.find((win) => win.options.webPreferences?.preload);
+  const invoke = (channel, ...args) => {
+    const handler = fake.ipcHandlers.get(channel);
+    assert.ok(handler, `the main process handles "${channel}"`);
+    return handler({ sender: mainWindow()?.webContents }, ...args);
+  };
+  /** 跟踪 invoke 的结果：settled 为 false 表示还没有结果 */
+  const track = (promise) => {
+    const tracked = { settled: false, value: undefined, error: undefined };
+    tracked.done = Promise.resolve(promise).then(
+      (value) => Object.assign(tracked, { settled: true, value }),
+      (error) => Object.assign(tracked, { settled: true, error }),
+    );
+    return tracked;
+  };
+
+  return { fake, backends, healthRequests, mainWindow, invoke, track };
+}
+
+// V105-02：whenReady 里原来是串行的——先显示启动画面，等后端打出端口、健康检查通过，才创建主窗口。
+// 渲染进程加载界面的那 0.6 秒本可以和后端启动同时进行
+test('V105-02: the main window is created right away, while the backend is still starting', async (t) => {
+  const app = await bootPackaged(t);
+
+  assert.equal(app.backends.length, 1, 'the backend was started');
+  assert.ok(app.mainWindow(), 'the main window exists before the backend printed its port');
+  assert.equal(app.fake.windows.length, 1, 'there is no splash window');
+
+  // 界面画好就显示，不等后端
+  assert.equal(app.mainWindow().isVisible(), false);
+  app.mainWindow().emit('ready-to-show');
+  assert.equal(app.mainWindow().isVisible(), true);
+});
+
+test('V105-02: backend:getConfig resolves only once the backend is up and healthy', async (t) => {
+  const app = await bootPackaged(t);
+
+  const config = app.track(app.invoke('backend:getConfig'));
+  await settle();
+  assert.equal(config.settled, false, 'getConfig waits while the backend has not printed its port');
+
+  app.backends[0].print('NEXTTYPROA_PORT=43210');
+  await config.done;
+
+  assert.equal(config.error, undefined);
+  assert.equal(config.value.port, 43210);
+  assert.equal(config.value.token, app.backends[0].env.AUTH_TOKEN);
+  assert.ok(app.healthRequests.includes('http://127.0.0.1:43210/api/health'), 'the health check passed before getConfig resolved');
+});
+
+test('V105-02: a backend that dies after the window is shown → error dialog over the main window, then quit', async (t) => {
+  const app = await bootPackaged(t);
+  const pendingConfig = app.track(app.invoke('backend:getConfig'));
+  const mainWindow = app.mainWindow();
+  assert.ok(mainWindow, 'the main window exists before the backend is ready');
+  mainWindow.emit('ready-to-show');
+
+  app.backends[0].exit(1);
+  await settle();
+
+  assert.equal(app.fake.state.errorDialogs.length, 1);
+  const [errorDialog] = app.fake.state.errorDialogs;
+  assert.match(errorDialog.text, /NextTypora 启动失败/);
+  assert.match(errorDialog.text, /后端进程异常退出 \(code=1\)/);
+  // 主窗口已经显示：错误框以它为父窗口，不会被挡在它后面
+  assert.equal(errorDialog.parent, mainWindow, 'the error dialog has the main window as its parent');
+  assert.equal(app.fake.state.hasQuit, true);
+  await pendingConfig.done;
+  assert.ok(pendingConfig.error, 'the renderer waiting in getConfig learns that the start failed');
+});
+
+test('V105-02: a missing backend.jar → error dialog, then quit, without the window ever showing', async (t) => {
+  const app = await bootPackaged(t, { withJar: false });
+
+  assert.equal(app.fake.state.errorDialogs.length, 1);
+  assert.match(app.fake.state.errorDialogs[0].text, /NextTypora 启动失败\nBackend jar not found: /);
+  assert.equal(app.fake.state.hasQuit, true);
+  assert.equal(app.fake.windows.filter((win) => win.isVisible()).length, 0, 'no window is left on screen');
+});
+
+test('V105-02: after backend:restart, getConfig hands out the new port and token, also while the restart is under way', async (t) => {
+  const app = await bootPackaged(t);
+  app.backends[0].print('NEXTTYPROA_PORT=43210');
+  const first = await app.invoke('backend:getConfig');
+
+  const restart = app.track(app.invoke('backend:restart'));
+  await settle();
+  assert.equal(app.backends[0].killed, true, 'the old backend was stopped');
+  assert.equal(app.backends.length, 2, 'a new backend was started');
+
+  // 渲染进程断线重连时会读配置，重启进行中也会：要等新后端，而不是拿到旧端口
+  const during = app.track(app.invoke('backend:getConfig'));
+  await settle();
+  assert.equal(during.settled, false, 'getConfig waits for the restarted backend');
+
+  app.backends[1].print('NEXTTYPROA_PORT=43211');
+  await restart.done;
+  await during.done;
+  assert.deepEqual(restart.value, { ok: true });
+  assert.equal(during.value.port, 43211);
+
+  const after = await app.invoke('backend:getConfig');
+  assert.equal(after.port, 43211);
+  assert.equal(after.token, app.backends[1].env.AUTH_TOKEN);
+  assert.notEqual(after.token, first.token);
+});
+
+// 开发模式：后端由 npm run dev 单独启动，getConfig 给的是环境变量里的配置
+test('V105-02: in development getConfig resolves to the configuration from the environment', async (t) => {
+  const app = await bootApp(t);
+
+  const config = await app.invoke('backend:getConfig');
+
+  assert.equal(config.port, Number(process.env.BACKEND_PORT || 8080));
+  assert.equal(config.token, 'test-token');
 });
