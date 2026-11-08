@@ -556,7 +556,7 @@ async function bootPackaged(t, { withJar = true } = {}) {
     return tracked;
   };
 
-  return { fake, backends, healthRequests, mainWindow, invoke, track };
+  return { fake, backends, healthRequests, mainWindow, invoke, track, jarPath };
 }
 
 // V105-02：whenReady 里原来是串行的——先显示启动画面，等后端打出端口、健康检查通过，才创建主窗口。
@@ -645,6 +645,27 @@ test('V105-02: after backend:restart, getConfig hands out the new port and token
   assert.equal(after.port, 43211);
   assert.equal(after.token, app.backends[1].env.AUTH_TOKEN);
   assert.notEqual(after.token, first.token);
+});
+
+// V105-04：后端的 JVM 参数只有 backendLaunch.js 一个来源，test:packaged 也从那里取。
+// main.js 自己拼 ['-jar', jarPath] 的话，测试测的是精简参数，发布出去的却是 JVM 默认值（G1、4GB 堆上限）
+test('V105-04: the packaged backend starts with the JVM flags from backendLaunch.js, also after a restart', async (t) => {
+  const { BACKEND_JVM_ARGS, buildBackendArgs } = require('./backendLaunch');
+  const app = await bootPackaged(t);
+
+  assert.deepEqual(app.backends[0].args, buildBackendArgs(app.jarPath));
+  // JVM 参数必须在 -jar 之前，放在后面会被当成传给应用的参数
+  assert.deepEqual(app.backends[0].args.slice(0, BACKEND_JVM_ARGS.length), [...BACKEND_JVM_ARGS]);
+
+  app.backends[0].print('NEXTTYPROA_PORT=43210');
+  await app.invoke('backend:getConfig');
+  const restart = app.track(app.invoke('backend:restart'));
+  await settle();
+  assert.equal(app.backends.length, 2, 'the restart started a new backend');
+  assert.deepEqual(app.backends[1].args, buildBackendArgs(app.jarPath), 'a restarted backend gets the same flags');
+  app.backends[1].print('NEXTTYPROA_PORT=43211');
+  await restart.done;
+  assert.equal(restart.error, undefined);
 });
 
 // 开发模式：后端由 npm run dev 单独启动，getConfig 给的是环境变量里的配置

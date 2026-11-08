@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const { loadSettings, patchSettings } = require('./settings');
+const { buildBackendArgs } = require('./backendLaunch');
 const {
   normalizePicGoServerUrl,
   sanitizeSettingsPatch,
@@ -174,7 +175,8 @@ function startBackend() {
       NEXTTYPROA_LOG_FILE: path.join(app.getPath('logs'), 'backend.log'),
     };
 
-    backendProcess = spawn(javaBin, ['-jar', jarPath], {
+    // JVM 参数只从 backendLaunch.js 取，test:packaged 用的是同一份（V105-04）
+    backendProcess = spawn(javaBin, buildBackendArgs(jarPath), {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
