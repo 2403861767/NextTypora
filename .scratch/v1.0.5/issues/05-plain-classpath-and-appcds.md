@@ -66,7 +66,7 @@ resources/backend/
 
 **文档。**
 
-- CLAUDE.md：更新 `test:packaged` 那一行（它现在写的是需要 `resources/backend.jar`）。在「Critical Safety Rules」或单独一节里写清楚：后端必须以普通 classpath 加类缓存的方式启动，不要改回 `-jar` 胖 jar；改了也不会报错，只是启动会悄悄慢 2 秒以上，`test:packaged` 的类缓存用例会拦住。
+- CLAUDE.md：更新 `test:packaged` 那一行（它现在写的是需要 `resources/backend.jar`）。在「Critical Safety Rules」或单独一节里写清楚：后端必须以普通 classpath 加类缓存的方式启动，不要改回 `-jar` 胖 jar；改了也不会报错，只是启动会悄悄慢 2 秒以上，`test:packaged` 的类缓存用例会拦住。注意 `CLAUDE.md` 被 `.gitignore` 忽略（V105-01 时发现），这些说明只存在本地；防回退靠的是那个测试用例，不是这段文字。
 - memory 里的打包版测试经验提到「grep the jar's `BOOT-INF/classes`」来确认构建是新的，布局改了以后要同步更新。
 
 ## 验收
@@ -74,7 +74,7 @@ resources/backend/
 - `npm run dist:verify -- --expect-version <当前版本>`、`npm run dist:setup`（包括其中的 `verify:release`）通过。
 - `test:packaged` 的类缓存命中用例通过；把 `app.jar` 的修改时间改掉以后，这个用例确实失败（证明它能拦住回退）。
 - 安装版的类缓存命中（经用户同意静默安装后确认），或者按上面的备选方案处理。
-- **`perf:measure`：启动时间 ≤ 2.0 秒，内存占用 ≤ 220MB。** 02–05 都完成后的最终数字写进 spec。如果内存仍超过 220MB，按 spec 开前端按需加载的工单。
+- **`perf:measure`：启动时间 ≤ 2.0 秒，内存占用 ≤ 250MB。**（内存目标原为 220MB，V105-01 按完整口径重测基线后改为 250MB，见 spec「目标」。）02–05 都完成后的最终数字写进 spec。如果内存仍超过 250MB，按 spec 开前端按需加载的工单。
 - 记录安装包大小的变化（预计比 1.0.4 的 169.8MB 小 10MB 左右）。
 
 ## Comments
