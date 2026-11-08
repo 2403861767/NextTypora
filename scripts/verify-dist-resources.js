@@ -153,6 +153,20 @@ if (!fs.existsSync(jreBin)) {
   ok = false;
 }
 
+// 基础类缓存（V105-04）。jlink 不加 --generate-cds-archive 就不会生成它：JVM 照样能启动，只是每次都
+// 从头加载 JDK 自己的类，V105-05 的应用类缓存（-XX:ArchiveClassesAtExit）也会直接报 unsupported。
+// 这种退化不报错，所以在这里拦下。能不能真的用上由 test:packaged 的 -Xshare:on 用例检查。
+const jreCdsArchive = path.join(
+  projectRoot, 'resources', 'jre', process.platform === 'win32' ? 'bin' : 'lib', 'server', 'classes.jsa',
+);
+if (!fs.existsSync(jreCdsArchive)) {
+  console.error(
+    `Missing base CDS archive of the bundled Java runtime: ${jreCdsArchive}\n`
+    + '  scripts/prepare-jre.js must run jlink with --generate-cds-archive.',
+  );
+  ok = false;
+}
+
 if (!ok) {
   process.exit(1);
 }

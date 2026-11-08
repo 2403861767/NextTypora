@@ -91,12 +91,25 @@ function buildWithJlink(javaHome, jlink) {
     '--no-man-pages',
     '--no-header-files',
     '--compress=2',
+    // 基础类缓存 bin/server/classes.jsa（V105-04）。jlink 默认不生成，JDK 自带的那份也不会复制过来，
+    // 没有它 JDK 自己的类每次启动都要从头加载、校验，V105-05 的应用类缓存也建不起来。
+    // 生成的缓存对应这个精简镜像本身的 lib/modules，所以必须由 jlink 在这里生成。
+    '--generate-cds-archive',
     `--output=${jreDir}`,
   ];
 
   const result = spawnSync(jlink, args, { stdio: 'inherit' });
   if (result.status !== 0) {
     throw new Error('jlink failed');
+  }
+
+  // jlink 把生成的 .jsa 标成只读，JDK 自带的那几份是可写的。照 JDK 的样子去掉只读，
+  // 免得安装包覆盖安装、卸载或用户手动删除时碰上只读文件。JVM 只读取、映射这个文件。
+  const serverDir = path.join(jreDir, process.platform === 'win32' ? 'bin' : 'lib', 'server');
+  for (const name of fs.readdirSync(serverDir)) {
+    if (name.endsWith('.jsa')) {
+      fs.chmodSync(path.join(serverDir, name), 0o644);
+    }
   }
 }
 

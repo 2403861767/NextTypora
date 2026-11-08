@@ -1,5 +1,6 @@
 // Runs the backend on the bundled runtime (resources/jre + resources/backend.jar), spawned the
-// same way electron/main.js does in the packaged app. Unit tests run on the full JDK and cannot
+// same way electron/main.js does in the packaged app (JVM flags from electron/backendLaunch.js).
+// Unit tests run on the full JDK and cannot
 // see modules missing from the jlink image (RW-P0-001: no jdk.charsets -> no Big5).
 // NEXTTYPROA_RESOURCES_DIR=release/win-unpacked/resources checks an unpacked build instead.
 const { test, before, after } = require('node:test');
@@ -8,7 +9,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const { BACKEND_JVM_ARGS, buildBackendArgs } = require('../electron/backendLaunch');
 
 const resourcesDir = path.resolve(process.env.NEXTTYPROA_RESOURCES_DIR || path.join(__dirname, '..', 'resources'));
 const javaBin = path.join(resourcesDir, 'jre', 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
@@ -90,7 +92,7 @@ async function openNote(relative) {
 
 function startBackend() {
   return new Promise((resolve, reject) => {
-    backend = spawn(javaBin, ['-jar', jarPath], {
+    backend = spawn(javaBin, buildBackendArgs(jarPath), {
       env: {
         ...process.env,
         SPRING_PROFILES_ACTIVE: 'embedded',
@@ -174,6 +176,30 @@ after(async () => {
   if (tempRoot) {
     fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
+});
+
+// V105-04: jlink only writes the base CDS archive (bin/server/classes.jsa) with
+// --generate-cds-archive; without it the JDK's own classes are loaded and verified from scratch on
+// every start, and V105-05's AppCDS (-XX:ArchiveClassesAtExit) is not supported at all.
+// -Xshare:on refuses to start when the archive is missing or unusable. Only this test uses it:
+// the real launch keeps the default -Xshare:auto, which falls back to a normal start.
+function javaVersion(args) {
+  const result = spawnSync(javaBin, [...args, '-version'], { encoding: 'utf8', timeout: 30000, windowsHide: true });
+  return { status: result.status, output: `${result.stdout || ''}${result.stderr || ''}`, error: result.error };
+}
+
+test('the bundled JRE has a usable base CDS archive (java -Xshare:on -version)', () => {
+  const { status, output, error } = javaVersion(['-Xshare:on']);
+  assert.ifError(error);
+  assert.equal(status, 0, `java -Xshare:on -version failed:\n${output}`);
+  assert.match(output, /sharing/, output);
+});
+
+test('the base CDS archive also maps under the backend JVM flags', () => {
+  const { status, output, error } = javaVersion([...BACKEND_JVM_ARGS, '-Xshare:on']);
+  assert.ifError(error);
+  assert.equal(status, 0, `java ${BACKEND_JVM_ARGS.join(' ')} -Xshare:on -version failed:\n${output}`);
+  assert.match(output, /sharing/, output);
 });
 
 test('startup reindex covers every note in the workspace', async () => {
